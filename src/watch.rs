@@ -13,6 +13,16 @@ use crate::api;
 use crate::model::DeviceInfo;
 use crate::output::format_duration_short;
 
+/// RAII guard that restores terminal state on drop, even if the watch loop panics.
+struct TerminalGuard;
+
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        let _ = execute!(io::stdout(), cursor::Show, terminal::LeaveAlternateScreen);
+        let _ = terminal::disable_raw_mode();
+    }
+}
+
 struct DeviceSnapshot {
     name: String,
     online: bool,
@@ -36,15 +46,11 @@ pub async fn run(
     interval: Duration,
 ) -> Result<()> {
     terminal::enable_raw_mode()?;
+    let _guard = TerminalGuard;
     let mut stdout = io::stdout();
     execute!(stdout, terminal::EnterAlternateScreen, cursor::Hide)?;
 
-    let result = watch_loop(devices, client, interval, &mut stdout).await;
-
-    execute!(stdout, cursor::Show, terminal::LeaveAlternateScreen)?;
-    terminal::disable_raw_mode()?;
-
-    result
+    watch_loop(devices, client, interval, &mut stdout).await
 }
 
 async fn watch_loop(

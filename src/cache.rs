@@ -22,6 +22,11 @@ pub fn load_devices() -> Result<Vec<DeviceInfo>> {
     Ok(devices)
 }
 
+/// Returns true if the device cache file exists on disk.
+pub fn cache_exists() -> bool {
+    cache_path().ok().is_some_and(|p| p.exists())
+}
+
 pub fn save_devices(devices: &[DeviceInfo]) -> Result<()> {
     let path = cache_path()?;
     let data = serde_json::to_string_pretty(devices)?;

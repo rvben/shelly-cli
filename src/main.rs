@@ -182,7 +182,15 @@ fn resolve_all_or_group(cli: &Cli) -> Result<Vec<DeviceInfo>> {
     }
     let devices = cache::load_devices()?;
     if devices.is_empty() {
-        anyhow::bail!("no cached devices. Run 'shelly discover' first.");
+        if cache::cache_exists() {
+            anyhow::bail!(
+                "Device cache is empty. Re-scan with:\n  shelly discover --subnet YOUR_SUBNET/24"
+            );
+        } else {
+            anyhow::bail!(
+                "No devices discovered yet. Get started with:\n  shelly discover --subnet YOUR_SUBNET/24"
+            );
+        }
     }
     Ok(devices)
 }
@@ -244,6 +252,13 @@ async fn cmd_discover(
         output::print_json_success(&devices);
     } else {
         output::print_device_table(&devices);
+        if !devices.is_empty() {
+            println!();
+            println!("Found {} device(s). Try:", devices.len());
+            println!("  shelly status -a");
+            println!("  shelly health");
+            println!("  shelly watch");
+        }
     }
 
     Ok(())
@@ -566,6 +581,82 @@ async fn cmd_firmware(
                 }
             }
         }
+        FirmwareAction::Update { all } => {
+            let infos = if all || cli.group.is_some() {
+                resolve_all_or_group(cli)?
+            } else {
+                resolve_targets(cli)?
+            };
+
+            let mut results = Vec::new();
+            for info in &infos {
+                let device = api::create_device(info.clone(), http_client.clone());
+                let name = info.display_name();
+
+                match device.firmware_check().await {
+                    Ok(fw) if fw.has_update => {
+                        if !json_output {
+                            eprint!("{name}: updating from {}...", fw.current_version);
+                        }
+                        match device.firmware_update().await {
+                            Ok(()) => {
+                                if json_output {
+                                    results.push(serde_json::json!({
+                                        "device": name,
+                                        "ip": info.ip.to_string(),
+                                        "status": "updating",
+                                        "from": fw.current_version,
+                                        "to": fw.stable_version,
+                                    }));
+                                } else {
+                                    eprintln!(
+                                        " update triggered (-> {})",
+                                        fw.stable_version.as_deref().unwrap_or("latest")
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                if json_output {
+                                    results.push(serde_json::json!({
+                                        "device": name,
+                                        "ip": info.ip.to_string(),
+                                        "error": e.to_string(),
+                                    }));
+                                } else {
+                                    eprintln!(" failed: {e}");
+                                }
+                            }
+                        }
+                    }
+                    Ok(_) => {
+                        if json_output {
+                            results.push(serde_json::json!({
+                                "device": name,
+                                "ip": info.ip.to_string(),
+                                "status": "up_to_date",
+                            }));
+                        } else {
+                            println!("{name}: already up to date");
+                        }
+                    }
+                    Err(e) => {
+                        if json_output {
+                            results.push(serde_json::json!({
+                                "device": name,
+                                "ip": info.ip.to_string(),
+                                "error": e.to_string(),
+                            }));
+                        } else {
+                            eprintln!("{name}: error checking firmware: {e}");
+                        }
+                    }
+                }
+            }
+
+            if json_output {
+                output::print_json_success(&results);
+            }
+        }
     }
 
     Ok(())
@@ -654,5 +745,30 @@ async fn cmd_health(
 fn cmd_group(action: GroupAction, json_output: bool) -> Result<()> {
     match action {
         GroupAction::List => groups::list_groups(json_output),
+        GroupAction::Add { name, devices } => {
+            groups::add_group(&name, devices.clone())?;
+            if json_output {
+                output::print_json_success(&serde_json::json!({
+                    "group": name,
+                    "devices": devices,
+                }));
+            } else {
+                println!("Group '{name}' created with {} device(s).", devices.len());
+            }
+            Ok(())
+        }
+        GroupAction::Remove { name } => {
+            groups::remove_group(&name)?;
+            if json_output {
+                output::print_json_success(&serde_json::json!({
+                    "group": name,
+                    "removed": true,
+                }));
+            } else {
+                println!("Group '{name}' removed.");
+            }
+            Ok(())
+        }
+        GroupAction::Show { name } => groups::show_group(&name, json_output),
     }
 }
