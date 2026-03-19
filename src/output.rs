@@ -1,4 +1,12 @@
+use std::io::IsTerminal;
+
+use owo_colors::OwoColorize;
+
 use crate::model::{DeviceInfo, DeviceStatus, PowerReading, SwitchStatus};
+
+pub fn use_color() -> bool {
+    std::io::stdout().is_terminal()
+}
 
 pub fn print_device_table(devices: &[DeviceInfo]) {
     if devices.is_empty() {
@@ -6,11 +14,23 @@ pub fn print_device_table(devices: &[DeviceInfo]) {
         return;
     }
 
-    println!(
+    let color = use_color();
+    let header = format!(
         "{:<30} {:<16} {:<5} {:<12} {:<10} {:<18}",
         "Name", "IP", "Gen", "Model", "FW", "MAC"
     );
-    println!("{}", "-".repeat(95));
+    if color {
+        println!("{}", header.bold());
+    } else {
+        println!("{header}");
+    }
+
+    let sep = "-".repeat(95);
+    if color {
+        println!("{}", sep.dimmed());
+    } else {
+        println!("{sep}");
+    }
 
     for d in devices {
         println!(
@@ -48,7 +68,7 @@ pub fn print_status(name: &str, status: &DeviceStatus) {
         println!("  MQTT: {}", if mqtt { "connected" } else { "disconnected" });
     }
     if let Some(temp) = status.temperature_c {
-        println!("  Temperature: {temp:.1}°C");
+        println!("  Temperature: {temp:.1}\u{00b0}C");
     }
 
     for sw in &status.switches {
@@ -57,7 +77,14 @@ pub fn print_status(name: &str, status: &DeviceStatus) {
 }
 
 pub fn print_switch_status(sw: &SwitchStatus) {
-    let state = if sw.output { "ON" } else { "OFF" };
+    let color = use_color();
+    let state = if sw.output {
+        if color { "ON".green().to_string() } else { "ON".to_string() }
+    } else if color {
+        "OFF".dimmed().to_string()
+    } else {
+        "OFF".to_string()
+    };
     println!("  Switch {}: {state}", sw.id);
     if let Some(power) = sw.power_watts {
         println!("    Power: {power:.1}W");
@@ -72,7 +99,7 @@ pub fn print_switch_status(sw: &SwitchStatus) {
         println!("    Total energy: {:.2} kWh", total / 1000.0);
     }
     if let Some(temp) = sw.temperature_c {
-        println!("    Temperature: {temp:.1}°C");
+        println!("    Temperature: {temp:.1}\u{00b0}C");
     }
     if let Some(source) = &sw.source {
         println!("    Last source: {source}");

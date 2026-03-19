@@ -1,8 +1,9 @@
+use owo_colors::OwoColorize;
 use serde::Serialize;
 
 use crate::api;
 use crate::model::DeviceInfo;
-use crate::output::format_duration;
+use crate::output::{format_duration, use_color};
 
 const TEMP_WARN_C: f64 = 60.0;
 const TEMP_CRIT_C: f64 = 75.0;
@@ -85,11 +86,11 @@ pub async fn check_device(
 
     let temp_status = match temperature_c {
         Some(t) if t >= TEMP_CRIT_C => {
-            issues.push(format!("temperature {t:.1}°C exceeds {TEMP_CRIT_C}°C"));
+            issues.push(format!("temperature {t:.1}\u{00b0}C exceeds {TEMP_CRIT_C}\u{00b0}C"));
             TempStatus::Hot
         }
         Some(t) if t >= TEMP_WARN_C => {
-            issues.push(format!("temperature {t:.1}°C above {TEMP_WARN_C}°C"));
+            issues.push(format!("temperature {t:.1}\u{00b0}C above {TEMP_WARN_C}\u{00b0}C"));
             TempStatus::Warm
         }
         Some(_) => TempStatus::Normal,
@@ -141,21 +142,67 @@ pub async fn check_device(
     }
 }
 
+fn colored_icon(icon: &str, color: bool) -> String {
+    if !color {
+        return icon.to_string();
+    }
+    match icon {
+        "OK" => "OK".green().bold().to_string(),
+        "!!" => "!!".yellow().bold().to_string(),
+        "X" => "X".red().bold().to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn colored_temp_status(status: &TempStatus, temp_str: &str, color: bool) -> String {
+    if !color {
+        return temp_str.to_string();
+    }
+    match status {
+        TempStatus::Normal => temp_str.green().to_string(),
+        TempStatus::Warm => temp_str.yellow().to_string(),
+        TempStatus::Hot => temp_str.red().to_string(),
+        TempStatus::Unknown => temp_str.dimmed().to_string(),
+    }
+}
+
+fn colored_wifi_status(status: &WifiSignal, rssi_str: &str, color: bool) -> String {
+    if !color {
+        return rssi_str.to_string();
+    }
+    match status {
+        WifiSignal::Strong => rssi_str.green().to_string(),
+        WifiSignal::Good => rssi_str.to_string(),
+        WifiSignal::Weak => rssi_str.yellow().to_string(),
+        WifiSignal::VeryWeak => rssi_str.red().to_string(),
+        WifiSignal::Unknown => rssi_str.dimmed().to_string(),
+    }
+}
+
 pub fn print_health_report(reports: &[HealthReport]) {
+    let color = use_color();
     let mut offline_count = 0;
     let mut issue_count = 0;
     let mut update_count = 0;
     let mut weakest_rssi: Option<(i32, String)> = None;
 
     for report in reports {
-        let icon = if !report.online {
+        let (icon_raw, icon_display) = if !report.online {
             offline_count += 1;
-            "x"
+            ("X", colored_icon("X", color))
         } else if report.issues.is_empty() {
-            "ok"
+            ("OK", colored_icon("OK", color))
         } else {
             issue_count += 1;
-            "!!"
+            ("!!", colored_icon("!!", color))
+        };
+
+        // Pad the icon field manually since ANSI codes break format width
+        let icon_pad = match icon_raw {
+            "OK" => " ",
+            "!!" => " ",
+            "X" => "  ",
+            _ => " ",
         };
 
         if report.has_update {
@@ -170,31 +217,53 @@ pub fn print_health_report(reports: &[HealthReport]) {
 
         let temp_str = report
             .temperature_c
-            .map(|t| format!("{t:.1}°C ({})", report.temperature_status))
+            .map(|t| format!("{t:.1}\u{00b0}C ({})", report.temperature_status))
             .unwrap_or_else(|| "-".into());
+        let temp_display = colored_temp_status(&report.temperature_status, &temp_str, color);
 
         let rssi_str = report
             .wifi_rssi
             .map(|r| format!("{r} dBm ({})", report.wifi_status))
             .unwrap_or_else(|| "-".into());
+        let rssi_display = colored_wifi_status(&report.wifi_status, &rssi_str, color);
 
         let uptime_str = report
             .uptime_seconds
             .map(format_duration)
             .unwrap_or_else(|| "-".into());
 
+        let device_display = if !report.online && color {
+            report.device.red().to_string()
+        } else {
+            report.device.clone()
+        };
+
+        let online_label = if report.online {
+            if color { "online".green().to_string() } else { "online".to_string() }
+        } else if color {
+            "OFFLINE".red().bold().to_string()
+        } else {
+            "OFFLINE".to_string()
+        };
+
+        // Use manual padding for fields that contain ANSI codes
         println!(
-            " {icon:<2}  {:<30} {:<16} temp: {:<20} wifi: {:<22} up: {:<12} fw: {}",
-            report.device,
+            " {icon_display}{icon_pad} {device_display:<30} {:<16} temp: {temp_display:<20} wifi: {rssi_display:<22} up: {uptime_str:<12} fw: {}",
             report.ip,
-            temp_str,
-            rssi_str,
-            uptime_str,
             report.firmware,
         );
 
+        if !report.online {
+            // Print the OFFLINE marker as an issue line
+            println!("        {online_label}");
+        }
+
         for issue in &report.issues {
-            println!("        {issue}");
+            if color {
+                println!("        {}", issue.yellow());
+            } else {
+                println!("        {issue}");
+            }
         }
     }
 
@@ -202,10 +271,25 @@ pub fn print_health_report(reports: &[HealthReport]) {
 
     let total = reports.len();
     let online = total - offline_count;
-    println!("Summary: {online}/{total} online, {issue_count} with issues, {update_count} firmware updates available");
+
+    if color {
+        let online_str = format!("{online}/{total}").green().to_string();
+        let issue_str = if issue_count > 0 {
+            format!("{issue_count}").yellow().to_string()
+        } else {
+            format!("{issue_count}")
+        };
+        let update_str = if update_count > 0 {
+            format!("{update_count}").yellow().to_string()
+        } else {
+            format!("{update_count}")
+        };
+        println!("Summary: {online_str} online, {issue_str} with issues, {update_str} firmware updates available");
+    } else {
+        println!("Summary: {online}/{total} online, {issue_count} with issues, {update_count} firmware updates available");
+    }
 
     if let Some((rssi, name)) = weakest_rssi {
         println!("Weakest WiFi: {rssi} dBm ({name})");
     }
 }
-

@@ -15,6 +15,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use clap::Parser;
+use owo_colors::OwoColorize;
 
 use cli::{Cli, Command, ConfigAction, FirmwareAction, GroupAction, SwitchAction};
 use model::DeviceInfo;
@@ -172,6 +173,17 @@ fn resolve_all_or_group(cli: &Cli) -> Result<Vec<DeviceInfo>> {
         anyhow::bail!("no cached devices. Run 'shelly discover' first.");
     }
     Ok(devices)
+}
+
+fn colored_on_off(on: bool, color: bool) -> String {
+    let color = color && output::use_color();
+    if on {
+        if color { "ON".green().to_string() } else { "ON".to_string() }
+    } else if color {
+        "OFF".dimmed().to_string()
+    } else {
+        "OFF".to_string()
+    }
 }
 
 async fn cmd_discover(
@@ -341,10 +353,9 @@ async fn cmd_switch(
                 if json_output {
                     json_results.push(serde_json::json!({ "device": name, "was_on": result.was_on }));
                 } else {
-                    println!(
-                        "{name}: Switch {id} ON (was {})",
-                        if result.was_on { "on" } else { "off" }
-                    );
+                    let on_label = colored_on_off(true, !json_output);
+                    let was_label = colored_on_off(result.was_on, !json_output);
+                    println!("{name}: Switch {id} {on_label} (was {was_label})");
                 }
             }
             SwitchAction::Off { id } => {
@@ -352,10 +363,9 @@ async fn cmd_switch(
                 if json_output {
                     json_results.push(serde_json::json!({ "device": name, "was_on": result.was_on }));
                 } else {
-                    println!(
-                        "{name}: Switch {id} OFF (was {})",
-                        if result.was_on { "on" } else { "off" }
-                    );
+                    let off_label = colored_on_off(false, !json_output);
+                    let was_label = colored_on_off(result.was_on, !json_output);
+                    println!("{name}: Switch {id} {off_label} (was {was_label})");
                 }
             }
             SwitchAction::Toggle { id } => {
@@ -363,10 +373,13 @@ async fn cmd_switch(
                 if json_output {
                     json_results.push(serde_json::json!({ "device": name, "was_on": result.was_on }));
                 } else {
-                    println!(
-                        "{name}: Switch {id} TOGGLED (was {})",
-                        if result.was_on { "on" } else { "off" }
-                    );
+                    let was_label = colored_on_off(result.was_on, !json_output);
+                    let toggled = if output::use_color() {
+                        "TOGGLED".cyan().to_string()
+                    } else {
+                        "TOGGLED".to_string()
+                    };
+                    println!("{name}: Switch {id} {toggled} (was {was_label})");
                 }
             }
         }
@@ -390,11 +403,17 @@ async fn cmd_power(
         let devices = resolve_all_or_group(cli)?;
 
         if !json_output {
-            println!(
+            let header = format!(
                 "{:<30} {:>8} {:>7} {:>8} {:>12}",
                 "Device", "Power", "Volt", "Current", "Total"
             );
-            println!("{}", "-".repeat(70));
+            if output::use_color() {
+                println!("{}", header.bold());
+                println!("{}", "-".repeat(70).dimmed());
+            } else {
+                println!("{header}");
+                println!("{}", "-".repeat(70));
+            }
         }
 
         let mut results = Vec::new();
@@ -456,11 +475,17 @@ async fn cmd_firmware(
                 let devices = resolve_all_or_group(cli)?;
 
                 if !json_output {
-                    println!(
+                    let header = format!(
                         "{:<30} {:<16} {:<10} {:<20} {:<20}",
                         "Device", "IP", "Current", "Stable", "Beta"
                     );
-                    println!("{}", "-".repeat(96));
+                    if output::use_color() {
+                        println!("{}", header.bold());
+                        println!("{}", "-".repeat(96).dimmed());
+                    } else {
+                        println!("{header}");
+                        println!("{}", "-".repeat(96));
+                    }
                 }
 
                 let mut results = Vec::new();

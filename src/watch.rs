@@ -7,6 +7,7 @@ use crossterm::{
     event::{self, Event, KeyCode, KeyModifiers},
     terminal::{self, ClearType},
 };
+use owo_colors::OwoColorize;
 
 use crate::api;
 use crate::model::DeviceInfo;
@@ -133,6 +134,7 @@ async fn poll_all(devices: &[DeviceInfo], client: &reqwest::Client) -> Vec<Devic
 }
 
 fn render(stdout: &mut io::Stdout, snapshots: &[DeviceSnapshot]) -> Result<()> {
+    // Watch mode always runs in a TTY (alternate screen), so color is always on
     execute!(
         stdout,
         cursor::MoveTo(0, 0),
@@ -140,16 +142,21 @@ fn render(stdout: &mut io::Stdout, snapshots: &[DeviceSnapshot]) -> Result<()> {
     )?;
 
     let now = chrono::Local::now().format("%H:%M:%S");
-    writeln!(stdout, " shelly watch  |  {now}  |  press q to quit\r")?;
-    writeln!(stdout, "\r")?;
-
     writeln!(
         stdout,
-        " {:<30} {:<5} {:>8} {:>8} {:>7} {:>10} {:>6} Uptime\r",
-        "Device", "State", "Power", "Voltage", "Temp", "Energy", "RSSI"
+        " {}  |  {now}  |  press {} to quit\r",
+        "shelly watch".bold(),
+        "q".bold()
     )?;
+    writeln!(stdout, "\r")?;
 
-    writeln!(stdout, " {}\r", "-".repeat(95))?;
+    let header = format!(
+        " {:<30} {:<5} {:>8} {:>8} {:>7} {:>10} {:>6} Uptime",
+        "Device", "State", "Power", "Voltage", "Temp", "Energy", "RSSI"
+    );
+    writeln!(stdout, "{}\r", header.bold())?;
+
+    writeln!(stdout, " {}\r", "-".repeat(95).dimmed())?;
 
     let mut total_power = 0.0;
     let mut on_count = 0u32;
@@ -161,7 +168,13 @@ fn render(stdout: &mut io::Stdout, snapshots: &[DeviceSnapshot]) -> Result<()> {
             writeln!(
                 stdout,
                 " {:<30} {:<5} {:>8} {:>8} {:>7} {:>10} {:>6} -\r",
-                snap.name, "OFFLINE", "-", "-", "-", "-", "-"
+                snap.name.red(),
+                "OFFLINE".red().bold(),
+                "-".dimmed(),
+                "-".dimmed(),
+                "-".dimmed(),
+                "-".dimmed(),
+                "-".dimmed()
             )?;
             total_count += 1;
             continue;
@@ -172,7 +185,7 @@ fn render(stdout: &mut io::Stdout, snapshots: &[DeviceSnapshot]) -> Result<()> {
         if snap.switches.is_empty() {
             let temp = snap
                 .temperature_c
-                .map(|t| format!("{t:.0}°C"))
+                .map(|t| format!("{t:.0}\u{00b0}C"))
                 .unwrap_or_else(|| "-".into());
             let rssi = snap
                 .rssi
@@ -186,7 +199,14 @@ fn render(stdout: &mut io::Stdout, snapshots: &[DeviceSnapshot]) -> Result<()> {
             writeln!(
                 stdout,
                 " {:<30} {:<5} {:>8} {:>8} {:>7} {:>10} {:>6} {}\r",
-                snap.name, "-", "-", "-", temp, "-", rssi, uptime,
+                snap.name,
+                "-".dimmed(),
+                "-".dimmed(),
+                "-".dimmed(),
+                temp,
+                "-".dimmed(),
+                rssi,
+                uptime,
             )?;
             total_count += 1;
         } else {
@@ -198,11 +218,11 @@ fn render(stdout: &mut io::Stdout, snapshots: &[DeviceSnapshot]) -> Result<()> {
                     snap.name.clone()
                 };
 
-                let state = if sw.output {
+                let state: String = if sw.output {
                     on_count += 1;
-                    "ON"
+                    "ON".green().to_string()
                 } else {
-                    "OFF"
+                    "OFF".dimmed().to_string()
                 };
 
                 let power = sw
@@ -220,7 +240,7 @@ fn render(stdout: &mut io::Stdout, snapshots: &[DeviceSnapshot]) -> Result<()> {
 
                 let temp = snap
                     .temperature_c
-                    .map(|t| format!("{t:.0}°C"))
+                    .map(|t| format!("{t:.0}\u{00b0}C"))
                     .unwrap_or_else(|| "-".into());
 
                 let energy = sw
@@ -238,23 +258,33 @@ fn render(stdout: &mut io::Stdout, snapshots: &[DeviceSnapshot]) -> Result<()> {
                     .map(format_duration_short)
                     .unwrap_or_else(|| "-".into());
 
+                // ANSI codes break format width, so pad state manually
+                let state_padded = if sw.output {
+                    // "ON" is 2 chars, pad to 5
+                    format!("{state}   ")
+                } else {
+                    // "OFF" is 3 chars, pad to 5
+                    format!("{state}  ")
+                };
+
                 writeln!(
                     stdout,
-                    " {:<30} {:<5} {:>8} {:>8} {:>7} {:>10} {:>6} {}\r",
-                    label, state, power, voltage, temp, energy, rssi, uptime,
+                    " {:<30} {} {:>8} {:>8} {:>7} {:>10} {:>6} {}\r",
+                    label, state_padded, power, voltage, temp, energy, rssi, uptime,
                 )?;
             }
         }
     }
 
-    writeln!(stdout, " {}\r", "-".repeat(95))?;
+    writeln!(stdout, " {}\r", "-".repeat(95).dimmed())?;
+
+    let power_display = format!("{total_power:.1}W").bold().to_string();
     writeln!(
         stdout,
-        " Total: {total_power:.1}W  |  {on_count}/{total_count} ON  |  {online_count}/{} online\r",
+        " Total: {power_display}  |  {on_count}/{total_count} ON  |  {online_count}/{} online\r",
         snapshots.len()
     )?;
 
     stdout.flush()?;
     Ok(())
 }
-
