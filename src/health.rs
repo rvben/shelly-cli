@@ -2,6 +2,7 @@ use serde::Serialize;
 
 use crate::api;
 use crate::model::DeviceInfo;
+use crate::output::format_duration;
 
 const TEMP_WARN_C: f64 = 60.0;
 const TEMP_CRIT_C: f64 = 75.0;
@@ -208,13 +209,3 @@ pub fn print_health_report(reports: &[HealthReport]) {
     }
 }
 
-fn format_duration(seconds: u64) -> String {
-    let days = seconds / 86400;
-    let hours = (seconds % 86400) / 3600;
-
-    if days > 0 {
-        format!("{days}d {hours}h")
-    } else {
-        format!("{hours}h")
-    }
-}

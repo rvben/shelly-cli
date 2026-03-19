@@ -50,7 +50,7 @@ pub async fn scan_subnet(
         devices.push(info);
     }
 
-    devices.sort_by(|a, b| a.ip.to_string().cmp(&b.ip.to_string()));
+    devices.sort_by(|a, b| a.ip.cmp(&b.ip));
     Ok(devices)
 }
 

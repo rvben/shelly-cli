@@ -13,23 +13,16 @@ pub struct AppConfig {
 pub struct NetworkConfig {
     #[serde(default = "default_subnet")]
     pub subnet: String,
-    #[serde(default = "default_timeout")]
-    pub timeout_ms: u64,
 }
 
 fn default_subnet() -> String {
     "10.10.20.0/24".to_string()
 }
 
-fn default_timeout() -> u64 {
-    3000
-}
-
 impl Default for NetworkConfig {
     fn default() -> Self {
         Self {
             subnet: default_subnet(),
-            timeout_ms: default_timeout(),
         }
     }
 }

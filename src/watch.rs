@@ -10,6 +10,7 @@ use crossterm::{
 
 use crate::api;
 use crate::model::DeviceInfo;
+use crate::output::format_duration_short;
 
 struct DeviceSnapshot {
     name: String,
@@ -257,16 +258,3 @@ fn render(stdout: &mut io::Stdout, snapshots: &[DeviceSnapshot]) -> Result<()> {
     Ok(())
 }
 
-fn format_duration_short(seconds: u64) -> String {
-    let days = seconds / 86400;
-    let hours = (seconds % 86400) / 3600;
-    let mins = (seconds % 3600) / 60;
-
-    if days > 0 {
-        format!("{days}d{hours}h")
-    } else if hours > 0 {
-        format!("{hours}h{mins}m")
-    } else {
-        format!("{mins}m")
-    }
-}

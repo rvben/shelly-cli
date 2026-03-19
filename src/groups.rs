@@ -40,6 +40,20 @@ pub fn load_groups() -> Result<HashMap<String, GroupDef>> {
     Ok(file.groups)
 }
 
+fn matches_filter(device: &DeviceInfo, filter: &str) -> bool {
+    let filter_lower = filter.to_lowercase();
+    match filter_lower.as_str() {
+        "gen1" => device.generation == crate::model::DeviceGeneration::Gen1,
+        "gen2" => device.generation == crate::model::DeviceGeneration::Gen2,
+        "gen3" => device.generation == crate::model::DeviceGeneration::Gen3,
+        "all" => true,
+        _ => {
+            device.model.to_lowercase().contains(&filter_lower)
+                || device.display_name().to_lowercase().contains(&filter_lower)
+        }
+    }
+}
+
 pub fn resolve_group(group_name: &str) -> Result<Vec<DeviceInfo>> {
     let groups = load_groups()?;
     let group_def = groups
@@ -69,19 +83,9 @@ pub fn resolve_group(group_name: &str) -> Result<Vec<DeviceInfo>> {
             result
         }
         GroupDef::Filter { filter } => {
-            let filter_lower = filter.to_lowercase();
             all_devices
                 .into_iter()
-                .filter(|d| match filter_lower.as_str() {
-                    "gen1" => d.generation == crate::model::DeviceGeneration::Gen1,
-                    "gen2" => d.generation == crate::model::DeviceGeneration::Gen2,
-                    "gen3" => d.generation == crate::model::DeviceGeneration::Gen3,
-                    "all" => true,
-                    _ => {
-                        d.model.to_lowercase().contains(&filter_lower)
-                            || d.display_name().to_lowercase().contains(&filter_lower)
-                    }
-                })
+                .filter(|d| matches_filter(d, filter))
                 .collect()
         }
     };
@@ -93,37 +97,54 @@ pub fn resolve_group(group_name: &str) -> Result<Vec<DeviceInfo>> {
     Ok(matched)
 }
 
-pub fn list_groups() -> Result<()> {
+pub fn list_groups(json: bool) -> Result<()> {
     let groups = load_groups()?;
     if groups.is_empty() {
-        eprintln!("No groups defined. Create groups in ~/.config/shelly-cli/groups.toml");
-        eprintln!();
-        eprintln!("Example:");
-        eprintln!("  [groups]");
-        eprintln!("  lights = [\"Family Room Light Switch 1\", \"Frontdoor Light\"]");
-        eprintln!("  gen1 = {{ filter = \"gen1\" }}");
+        if json {
+            println!("[]");
+        } else {
+            eprintln!("No groups defined. Create groups in ~/.config/shelly-cli/groups.toml");
+            eprintln!();
+            eprintln!("Example:");
+            eprintln!("  [groups]");
+            eprintln!("  lights = [\"Family Room Light Switch 1\", \"Frontdoor Light\"]");
+            eprintln!("  gen1 = {{ filter = \"gen1\" }}");
+        }
         return Ok(());
     }
 
     let all_devices = cache::load_devices().unwrap_or_default();
 
+    if json {
+        let mut entries = Vec::new();
+        for (name, def) in &groups {
+            let (count, description) = match def {
+                GroupDef::Names(names) => (names.len(), names.join(", ")),
+                GroupDef::Filter { filter } => {
+                    let count = all_devices
+                        .iter()
+                        .filter(|d| matches_filter(d, filter))
+                        .count();
+                    (count, format!("filter: {filter}"))
+                }
+            };
+            entries.push(serde_json::json!({
+                "name": name,
+                "device_count": count,
+                "description": description,
+            }));
+        }
+        println!("{}", serde_json::to_string_pretty(&entries)?);
+        return Ok(());
+    }
+
     for (name, def) in &groups {
         let count = match def {
             GroupDef::Names(names) => names.len(),
             GroupDef::Filter { filter } => {
-                let filter_lower = filter.to_lowercase();
                 all_devices
                     .iter()
-                    .filter(|d| match filter_lower.as_str() {
-                        "gen1" => d.generation == crate::model::DeviceGeneration::Gen1,
-                        "gen2" => d.generation == crate::model::DeviceGeneration::Gen2,
-                        "gen3" => d.generation == crate::model::DeviceGeneration::Gen3,
-                        "all" => true,
-                        _ => {
-                            d.model.to_lowercase().contains(&filter_lower)
-                                || d.display_name().to_lowercase().contains(&filter_lower)
-                        }
-                    })
+                    .filter(|d| matches_filter(d, filter))
                     .count()
             }
         };

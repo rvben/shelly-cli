@@ -1,9 +1,8 @@
 use anyhow::{Context, Result};
-use async_trait::async_trait;
 
 use crate::model::{DeviceInfo, DeviceStatus, PowerReading, SwitchStatus};
 
-use super::{FirmwareInfo, ShellyDevice, SwitchResult};
+use super::{FirmwareInfo, SwitchResult};
 
 pub struct Gen2Device {
     info: DeviceInfo,
@@ -44,26 +43,23 @@ impl Gen2Device {
             .await
             .with_context(|| format!("invalid JSON from {url}"))
     }
-}
 
-#[async_trait]
-impl ShellyDevice for Gen2Device {
-    fn info(&self) -> &DeviceInfo {
+    pub fn info(&self) -> &DeviceInfo {
         &self.info
     }
 
-    async fn status(&self) -> Result<DeviceStatus> {
+    pub async fn status(&self) -> Result<DeviceStatus> {
         let status = self.rpc_call("Shelly.GetStatus", None).await?;
         Ok(DeviceStatus::from_gen2(&status))
     }
 
-    async fn switch_status(&self, id: u8) -> Result<SwitchStatus> {
+    pub async fn switch_status(&self, id: u8) -> Result<SwitchStatus> {
         let params = serde_json::json!({ "id": id });
         let resp = self.rpc_call("Switch.GetStatus", Some(params)).await?;
         Ok(SwitchStatus::from_gen2_switch(&resp))
     }
 
-    async fn switch_set(&self, id: u8, on: bool) -> Result<SwitchResult> {
+    pub async fn switch_set(&self, id: u8, on: bool) -> Result<SwitchResult> {
         let params = serde_json::json!({ "id": id, "on": on });
         let resp = self.rpc_call("Switch.Set", Some(params)).await?;
 
@@ -75,7 +71,7 @@ impl ShellyDevice for Gen2Device {
         Ok(SwitchResult { was_on })
     }
 
-    async fn switch_toggle(&self, id: u8) -> Result<SwitchResult> {
+    pub async fn switch_toggle(&self, id: u8) -> Result<SwitchResult> {
         let params = serde_json::json!({ "id": id });
         let resp = self.rpc_call("Switch.Toggle", Some(params)).await?;
 
@@ -87,7 +83,7 @@ impl ShellyDevice for Gen2Device {
         Ok(SwitchResult { was_on })
     }
 
-    async fn power(&self, id: u8) -> Result<PowerReading> {
+    pub async fn power(&self, id: u8) -> Result<PowerReading> {
         let params = serde_json::json!({ "id": id });
         let resp = self.rpc_call("Switch.GetStatus", Some(params)).await?;
 
@@ -109,7 +105,7 @@ impl ShellyDevice for Gen2Device {
         })
     }
 
-    async fn firmware_check(&self) -> Result<FirmwareInfo> {
+    pub async fn firmware_check(&self) -> Result<FirmwareInfo> {
         let resp = self.rpc_call("Shelly.CheckForUpdate", None).await?;
         let dev_info = self.rpc_call("Shelly.GetDeviceInfo", None).await?;
 
@@ -141,13 +137,12 @@ impl ShellyDevice for Gen2Device {
         })
     }
 
-    async fn config_get(&self) -> Result<serde_json::Value> {
+    pub async fn config_get(&self) -> Result<serde_json::Value> {
         self.rpc_call("Shelly.GetConfig", None).await
     }
 
-    async fn reboot(&self) -> Result<()> {
+    pub async fn reboot(&self) -> Result<()> {
         self.rpc_call("Shelly.Reboot", None).await?;
         Ok(())
     }
-
 }

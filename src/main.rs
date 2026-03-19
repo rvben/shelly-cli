@@ -37,8 +37,8 @@ async fn main() -> Result<()> {
         Command::Devices { refresh } => {
             cmd_devices(refresh, timeout, json_output, cli.quiet).await
         }
-        Command::Status { all, id } => {
-            cmd_status(&cli, &http_client, all, id, json_output).await
+        Command::Status { all } => {
+            cmd_status(&cli, &http_client, all, json_output).await
         }
         Command::Switch { ref action } => {
             cmd_switch(&cli, &http_client, action.clone(), json_output).await
@@ -62,7 +62,7 @@ async fn main() -> Result<()> {
             cmd_health(&cli, &http_client, json_output).await
         }
         Command::Group { ref action } => {
-            cmd_group(action.clone())
+            cmd_group(action.clone(), json_output)
         }
         Command::Schema => {
             let schema = schema::generate_schema();
@@ -124,7 +124,7 @@ fn resolve_targets(cli: &Cli) -> Result<Vec<DeviceInfo>> {
 async fn resolve_and_probe_targets(
     cli: &Cli,
     http_client: &reqwest::Client,
-) -> Result<Vec<Box<dyn api::ShellyDevice>>> {
+) -> Result<Vec<api::ShellyDevice>> {
     let infos = resolve_targets(cli)?;
     let mut devices = Vec::with_capacity(infos.len());
 
@@ -233,7 +233,6 @@ async fn cmd_status(
     cli: &Cli,
     http_client: &reqwest::Client,
     all: bool,
-    _id: u8,
     json_output: bool,
 ) -> Result<()> {
     if all || cli.group.is_some() {
@@ -295,6 +294,8 @@ async fn cmd_switch(
 ) -> Result<()> {
     let targets = resolve_and_probe_targets(cli, http_client).await?;
 
+    let mut json_results: Vec<serde_json::Value> = Vec::new();
+
     for device in &targets {
         let name = device.info().display_name().to_string();
 
@@ -302,10 +303,10 @@ async fn cmd_switch(
             SwitchAction::Status { id } => {
                 let status = device.switch_status(id).await?;
                 if json_output {
-                    println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+                    json_results.push(serde_json::json!({
                         "device": name,
                         "status": status,
-                    }))?);
+                    }));
                 } else {
                     if targets.len() > 1 {
                         print!("{name}: ");
@@ -316,7 +317,7 @@ async fn cmd_switch(
             SwitchAction::On { id } => {
                 let result = device.switch_set(id, true).await?;
                 if json_output {
-                    println!("{}", serde_json::json!({ "device": name, "was_on": result.was_on }));
+                    json_results.push(serde_json::json!({ "device": name, "was_on": result.was_on }));
                 } else {
                     println!(
                         "{name}: Switch {id} ON (was {})",
@@ -327,7 +328,7 @@ async fn cmd_switch(
             SwitchAction::Off { id } => {
                 let result = device.switch_set(id, false).await?;
                 if json_output {
-                    println!("{}", serde_json::json!({ "device": name, "was_on": result.was_on }));
+                    json_results.push(serde_json::json!({ "device": name, "was_on": result.was_on }));
                 } else {
                     println!(
                         "{name}: Switch {id} OFF (was {})",
@@ -338,7 +339,7 @@ async fn cmd_switch(
             SwitchAction::Toggle { id } => {
                 let result = device.switch_toggle(id).await?;
                 if json_output {
-                    println!("{}", serde_json::json!({ "device": name, "was_on": result.was_on }));
+                    json_results.push(serde_json::json!({ "device": name, "was_on": result.was_on }));
                 } else {
                     println!(
                         "{name}: Switch {id} TOGGLED (was {})",
@@ -347,6 +348,10 @@ async fn cmd_switch(
                 }
             }
         }
+    }
+
+    if json_output {
+        println!("{}", serde_json::to_string_pretty(&json_results)?);
     }
 
     Ok(())
@@ -567,10 +572,18 @@ async fn cmd_health(
 ) -> Result<()> {
     let devices = resolve_all_or_group(cli)?;
 
-    let mut reports = Vec::new();
-    for info in &devices {
-        let report = health::check_device(info, http_client).await;
-        reports.push(report);
+    let handles: Vec<_> = devices
+        .iter()
+        .map(|info| {
+            let info = info.clone();
+            let client = http_client.clone();
+            tokio::spawn(async move { health::check_device(&info, &client).await })
+        })
+        .collect();
+
+    let mut reports = Vec::with_capacity(handles.len());
+    for handle in handles {
+        reports.push(handle.await?);
     }
 
     if json_output {
@@ -582,8 +595,8 @@ async fn cmd_health(
     Ok(())
 }
 
-fn cmd_group(action: GroupAction) -> Result<()> {
+fn cmd_group(action: GroupAction, json_output: bool) -> Result<()> {
     match action {
-        GroupAction::List => groups::list_groups(),
+        GroupAction::List => groups::list_groups(json_output),
     }
 }

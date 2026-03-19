@@ -90,7 +90,7 @@ pub fn print_power_reading(name: &str, reading: &PowerReading) {
     );
 }
 
-fn format_duration(seconds: u64) -> String {
+pub fn format_duration(seconds: u64) -> String {
     let days = seconds / 86400;
     let hours = (seconds % 86400) / 3600;
     let mins = (seconds % 3600) / 60;
@@ -99,6 +99,20 @@ fn format_duration(seconds: u64) -> String {
         format!("{days}d {hours}h {mins}m")
     } else if hours > 0 {
         format!("{hours}h {mins}m")
+    } else {
+        format!("{mins}m")
+    }
+}
+
+pub fn format_duration_short(seconds: u64) -> String {
+    let days = seconds / 86400;
+    let hours = (seconds % 86400) / 3600;
+    let mins = (seconds % 3600) / 60;
+
+    if days > 0 {
+        format!("{days}d{hours}h")
+    } else if hours > 0 {
+        format!("{hours}h{mins}m")
     } else {
         format!("{mins}m")
     }

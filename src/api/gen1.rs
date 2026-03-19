@@ -1,9 +1,8 @@
 use anyhow::{Context, Result};
-use async_trait::async_trait;
 
 use crate::model::{DeviceInfo, DeviceStatus, PowerReading, SwitchStatus};
 
-use super::{FirmwareInfo, ShellyDevice, SwitchResult};
+use super::{FirmwareInfo, SwitchResult};
 
 pub struct Gen1Device {
     info: DeviceInfo,
@@ -36,20 +35,17 @@ impl Gen1Device {
             .await
             .with_context(|| format!("invalid JSON from {url}"))
     }
-}
 
-#[async_trait]
-impl ShellyDevice for Gen1Device {
-    fn info(&self) -> &DeviceInfo {
+    pub fn info(&self) -> &DeviceInfo {
         &self.info
     }
 
-    async fn status(&self) -> Result<DeviceStatus> {
+    pub async fn status(&self) -> Result<DeviceStatus> {
         let status = self.get_json("/status").await?;
         Ok(DeviceStatus::from_gen1(&status))
     }
 
-    async fn switch_status(&self, id: u8) -> Result<SwitchStatus> {
+    pub async fn switch_status(&self, id: u8) -> Result<SwitchStatus> {
         let status = self.get_json("/status").await?;
 
         let relays = status
@@ -69,7 +65,7 @@ impl ShellyDevice for Gen1Device {
         Ok(SwitchStatus::from_gen1_relay(id, relay, meter))
     }
 
-    async fn switch_set(&self, id: u8, on: bool) -> Result<SwitchResult> {
+    pub async fn switch_set(&self, id: u8, on: bool) -> Result<SwitchResult> {
         let turn = if on { "on" } else { "off" };
         let resp = self
             .get_json(&format!("/relay/{id}?turn={turn}"))
@@ -83,7 +79,7 @@ impl ShellyDevice for Gen1Device {
         Ok(SwitchResult { was_on })
     }
 
-    async fn switch_toggle(&self, id: u8) -> Result<SwitchResult> {
+    pub async fn switch_toggle(&self, id: u8) -> Result<SwitchResult> {
         let resp = self
             .get_json(&format!("/relay/{id}?turn=toggle"))
             .await?;
@@ -96,7 +92,7 @@ impl ShellyDevice for Gen1Device {
         Ok(SwitchResult { was_on })
     }
 
-    async fn power(&self, id: u8) -> Result<PowerReading> {
+    pub async fn power(&self, id: u8) -> Result<PowerReading> {
         let status = self.get_json("/status").await?;
 
         let meter = status
@@ -119,7 +115,7 @@ impl ShellyDevice for Gen1Device {
         })
     }
 
-    async fn firmware_check(&self) -> Result<FirmwareInfo> {
+    pub async fn firmware_check(&self) -> Result<FirmwareInfo> {
         let status = self.get_json("/status").await?;
 
         let update = status
@@ -155,13 +151,12 @@ impl ShellyDevice for Gen1Device {
         })
     }
 
-    async fn config_get(&self) -> Result<serde_json::Value> {
+    pub async fn config_get(&self) -> Result<serde_json::Value> {
         self.get_json("/settings").await
     }
 
-    async fn reboot(&self) -> Result<()> {
+    pub async fn reboot(&self) -> Result<()> {
         self.get_json("/reboot").await?;
         Ok(())
     }
-
 }

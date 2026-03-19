@@ -52,10 +52,6 @@ pub enum Command {
         /// Query all known devices
         #[arg(long)]
         all: bool,
-
-        /// Switch/relay ID (default: 0)
-        #[arg(long, default_value = "0")]
-        id: u8,
     },
 
     /// Control switch/relay outputs
