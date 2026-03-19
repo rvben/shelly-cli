@@ -62,7 +62,7 @@ impl Gen1Device {
             .and_then(|v| v.as_array())
             .and_then(|m| m.get(id as usize));
 
-        Ok(SwitchStatus::from_gen1_relay(id, relay, meter))
+        Ok(SwitchStatus::from_gen1_relay_json(id, relay, meter))
     }
 
     pub async fn switch_set(&self, id: u8, on: bool) -> Result<SwitchResult> {

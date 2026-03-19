@@ -1,4 +1,6 @@
 pub mod device;
+pub mod gen1_responses;
+pub mod gen2_responses;
 pub mod power;
 pub mod status;
 

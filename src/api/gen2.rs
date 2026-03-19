@@ -56,7 +56,7 @@ impl Gen2Device {
     pub async fn switch_status(&self, id: u8) -> Result<SwitchStatus> {
         let params = serde_json::json!({ "id": id });
         let resp = self.rpc_call("Switch.GetStatus", Some(params)).await?;
-        Ok(SwitchStatus::from_gen2_switch(&resp))
+        Ok(SwitchStatus::from_gen2_switch_json(&resp))
     }
 
     pub async fn switch_set(&self, id: u8, on: bool) -> Result<SwitchResult> {

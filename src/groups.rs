@@ -54,18 +54,12 @@ fn matches_filter(device: &DeviceInfo, filter: &str) -> bool {
     }
 }
 
-pub fn resolve_group(group_name: &str) -> Result<Vec<DeviceInfo>> {
-    let groups = load_groups()?;
-    let group_def = groups
-        .get(group_name)
-        .ok_or_else(|| anyhow::anyhow!("group '{group_name}' not found in groups.toml"))?;
-
-    let all_devices = cache::load_devices()?;
-    if all_devices.is_empty() {
-        anyhow::bail!("no cached devices. Run 'shelly discover' first.");
-    }
-
-    let matched = match group_def {
+/// Resolve a group definition against a provided device list.
+pub fn resolve_group_with_devices(
+    group_def: &GroupDef,
+    all_devices: &[DeviceInfo],
+) -> Vec<DeviceInfo> {
+    match group_def {
         GroupDef::Names(names) => {
             let mut result = Vec::new();
             for name in names {
@@ -84,11 +78,26 @@ pub fn resolve_group(group_name: &str) -> Result<Vec<DeviceInfo>> {
         }
         GroupDef::Filter { filter } => {
             all_devices
-                .into_iter()
+                .iter()
                 .filter(|d| matches_filter(d, filter))
+                .cloned()
                 .collect()
         }
-    };
+    }
+}
+
+pub fn resolve_group(group_name: &str) -> Result<Vec<DeviceInfo>> {
+    let groups = load_groups()?;
+    let group_def = groups
+        .get(group_name)
+        .ok_or_else(|| anyhow::anyhow!("group '{group_name}' not found in groups.toml"))?;
+
+    let all_devices = cache::load_devices()?;
+    if all_devices.is_empty() {
+        anyhow::bail!("no cached devices. Run 'shelly discover' first.");
+    }
+
+    let matched = resolve_group_with_devices(group_def, &all_devices);
 
     if matched.is_empty() {
         anyhow::bail!("group '{group_name}' matched no devices");
@@ -158,4 +167,138 @@ pub fn list_groups(json: bool) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::DeviceGeneration;
+
+    fn test_device(name: &str, id: &str, generation: DeviceGeneration, model: &str) -> DeviceInfo {
+        DeviceInfo {
+            ip: "10.10.20.1".parse().unwrap(),
+            name: Some(name.to_string()),
+            id: id.to_string(),
+            mac: "AABBCCDDEEFF".to_string(),
+            model: model.to_string(),
+            generation,
+            firmware_version: "1.0.0".to_string(),
+            auth_enabled: false,
+            num_outputs: 1,
+            num_meters: 1,
+            app: None,
+            device_type: None,
+        }
+    }
+
+    fn sample_devices() -> Vec<DeviceInfo> {
+        vec![
+            test_device("Kitchen Light", "shellypm-001", DeviceGeneration::Gen1, "SHSW-PM"),
+            test_device("Living Room", "shellyplus1pm-002", DeviceGeneration::Gen2, "SNSW-001P16EU"),
+            test_device("Bedroom Fan", "shelly1minig3-003", DeviceGeneration::Gen3, "S3SW-001X8EU"),
+            test_device("Garage Plug", "shellyplug-004", DeviceGeneration::Gen1, "SHPLG-1"),
+        ]
+    }
+
+    #[test]
+    fn names_group_all_found() {
+        let devices = sample_devices();
+        let group = GroupDef::Names(vec![
+            "Kitchen Light".to_string(),
+            "Living Room".to_string(),
+        ]);
+        let result = resolve_group_with_devices(&group, &devices);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].id, "shellypm-001");
+        assert_eq!(result[1].id, "shellyplus1pm-002");
+    }
+
+    #[test]
+    fn names_group_missing_device() {
+        let devices = sample_devices();
+        let group = GroupDef::Names(vec![
+            "Kitchen Light".to_string(),
+            "Nonexistent Device".to_string(),
+        ]);
+        let result = resolve_group_with_devices(&group, &devices);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].id, "shellypm-001");
+    }
+
+    #[test]
+    fn filter_gen1() {
+        let devices = sample_devices();
+        let group = GroupDef::Filter { filter: "gen1".to_string() };
+        let result = resolve_group_with_devices(&group, &devices);
+        assert_eq!(result.len(), 2);
+        assert!(result.iter().all(|d| d.generation == DeviceGeneration::Gen1));
+    }
+
+    #[test]
+    fn filter_gen2() {
+        let devices = sample_devices();
+        let group = GroupDef::Filter { filter: "gen2".to_string() };
+        let result = resolve_group_with_devices(&group, &devices);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].generation, DeviceGeneration::Gen2);
+    }
+
+    #[test]
+    fn filter_gen3() {
+        let devices = sample_devices();
+        let group = GroupDef::Filter { filter: "gen3".to_string() };
+        let result = resolve_group_with_devices(&group, &devices);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].generation, DeviceGeneration::Gen3);
+    }
+
+    #[test]
+    fn filter_all() {
+        let devices = sample_devices();
+        let group = GroupDef::Filter { filter: "all".to_string() };
+        let result = resolve_group_with_devices(&group, &devices);
+        assert_eq!(result.len(), 4);
+    }
+
+    #[test]
+    fn filter_by_model_substring() {
+        let devices = sample_devices();
+        let group = GroupDef::Filter { filter: "SHSW".to_string() };
+        let result = resolve_group_with_devices(&group, &devices);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].model, "SHSW-PM");
+    }
+
+    #[test]
+    fn filter_by_name_substring() {
+        let devices = sample_devices();
+        let group = GroupDef::Filter { filter: "light".to_string() };
+        let result = resolve_group_with_devices(&group, &devices);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].id, "shellypm-001");
+    }
+
+    #[test]
+    fn empty_device_list() {
+        let devices: Vec<DeviceInfo> = Vec::new();
+        let group = GroupDef::Filter { filter: "all".to_string() };
+        let result = resolve_group_with_devices(&group, &devices);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn names_group_empty_device_list() {
+        let devices: Vec<DeviceInfo> = Vec::new();
+        let group = GroupDef::Names(vec!["Kitchen Light".to_string()]);
+        let result = resolve_group_with_devices(&group, &devices);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn filter_case_insensitive() {
+        let devices = sample_devices();
+        let group = GroupDef::Filter { filter: "GEN1".to_string() };
+        let result = resolve_group_with_devices(&group, &devices);
+        assert_eq!(result.len(), 2);
+    }
 }
