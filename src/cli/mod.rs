@@ -11,6 +11,10 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub name: Option<String>,
 
+    /// Target a device group (defined in groups.toml)
+    #[arg(long, global = true)]
+    pub group: Option<String>,
+
     /// Output as JSON (auto-enabled when stdout is not a terminal)
     #[arg(long, global = true)]
     pub json: bool,
@@ -86,6 +90,22 @@ pub enum Command {
     /// Reboot a device
     Reboot,
 
+    /// Live-updating dashboard of all devices
+    Watch {
+        /// Refresh interval in seconds
+        #[arg(long, default_value = "2")]
+        interval: u64,
+    },
+
+    /// Check device health (temperature, WiFi, firmware, online status)
+    Health,
+
+    /// Manage device groups
+    Group {
+        #[command(subcommand)]
+        action: GroupAction,
+    },
+
     /// Dump all commands as JSON for agent introspection
     Schema,
 
@@ -138,4 +158,10 @@ pub enum FirmwareAction {
 pub enum ConfigAction {
     /// Get device configuration
     Get,
+}
+
+#[derive(Subcommand, Clone)]
+pub enum GroupAction {
+    /// List all defined groups
+    List,
 }

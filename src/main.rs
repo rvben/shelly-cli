@@ -2,9 +2,12 @@ mod api;
 mod cache;
 mod cli;
 mod config;
+mod groups;
+mod health;
 mod model;
 mod output;
 mod schema;
+mod watch;
 
 use std::io::IsTerminal;
 use std::net::IpAddr;
@@ -13,7 +16,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use clap::Parser;
 
-use cli::{Cli, Command, ConfigAction, FirmwareAction, SwitchAction};
+use cli::{Cli, Command, ConfigAction, FirmwareAction, GroupAction, SwitchAction};
 use model::DeviceInfo;
 
 #[tokio::main]
@@ -52,6 +55,15 @@ async fn main() -> Result<()> {
         Command::Reboot => {
             cmd_reboot(&cli, &http_client, json_output).await
         }
+        Command::Watch { interval } => {
+            cmd_watch(&cli, &http_client, interval).await
+        }
+        Command::Health => {
+            cmd_health(&cli, &http_client, json_output).await
+        }
+        Command::Group { ref action } => {
+            cmd_group(action.clone())
+        }
         Command::Schema => {
             let schema = schema::generate_schema();
             println!("{}", serde_json::to_string_pretty(&schema)?);
@@ -69,7 +81,13 @@ async fn main() -> Result<()> {
     }
 }
 
-fn resolve_device(cli: &Cli, http_client: &reqwest::Client) -> Result<(DeviceInfo, reqwest::Client)> {
+/// Resolve target devices from --host, --name, --group, or --all flags.
+/// Returns a list of DeviceInfo to operate on.
+fn resolve_targets(cli: &Cli) -> Result<Vec<DeviceInfo>> {
+    if let Some(ref group_name) = cli.group {
+        return groups::resolve_group(group_name);
+    }
+
     if let Some(ref host) = cli.host {
         let ip: IpAddr = host
             .parse()
@@ -89,27 +107,49 @@ fn resolve_device(cli: &Cli, http_client: &reqwest::Client) -> Result<(DeviceInf
             app: None,
             device_type: None,
         };
-        Ok((info, http_client.clone()))
-    } else if let Some(ref name) = cli.name {
+        return Ok(vec![info]);
+    }
+
+    if let Some(ref name) = cli.name {
         let devices = cache::load_devices()?;
         let info = cache::find_device_by_name(&devices, name)
             .ok_or_else(|| anyhow::anyhow!("device '{name}' not found in cache. Run 'shelly-cli discover' first."))?;
-        Ok((info, http_client.clone()))
-    } else {
-        anyhow::bail!("specify --host <IP> or --name <NAME> to target a device")
+        return Ok(vec![info]);
     }
+
+    anyhow::bail!("specify --host <IP>, --name <NAME>, or --group <GROUP> to target device(s)")
 }
 
-async fn resolve_and_probe(cli: &Cli, http_client: &reqwest::Client) -> Result<Box<dyn api::ShellyDevice>> {
-    let (info, client) = resolve_device(cli, http_client)?;
+/// Resolve targets and probe any that need it (e.g. --host without cached info).
+async fn resolve_and_probe_targets(
+    cli: &Cli,
+    http_client: &reqwest::Client,
+) -> Result<Vec<Box<dyn api::ShellyDevice>>> {
+    let infos = resolve_targets(cli)?;
+    let mut devices = Vec::with_capacity(infos.len());
 
-    let info = if info.id.is_empty() {
-        api::probe_device(info.ip, &client).await?
-    } else {
-        info
-    };
+    for info in infos {
+        let info = if info.id.is_empty() {
+            api::probe_device(info.ip, http_client).await?
+        } else {
+            info
+        };
+        devices.push(api::create_device(info, http_client.clone()));
+    }
 
-    Ok(api::create_device(info, client))
+    Ok(devices)
+}
+
+/// Load all cached devices, or resolve --group if specified.
+fn resolve_all_or_group(cli: &Cli) -> Result<Vec<DeviceInfo>> {
+    if let Some(ref group_name) = cli.group {
+        return groups::resolve_group(group_name);
+    }
+    let devices = cache::load_devices()?;
+    if devices.is_empty() {
+        anyhow::bail!("no cached devices. Run 'shelly-cli discover' first.");
+    }
+    Ok(devices)
 }
 
 async fn cmd_discover(
@@ -196,11 +236,8 @@ async fn cmd_status(
     _id: u8,
     json_output: bool,
 ) -> Result<()> {
-    if all {
-        let devices = cache::load_devices()?;
-        if devices.is_empty() {
-            anyhow::bail!("no cached devices. Run 'shelly-cli discover' first.");
-        }
+    if all || cli.group.is_some() {
+        let devices = resolve_all_or_group(cli)?;
 
         let mut results = Vec::new();
         for info in &devices {
@@ -236,7 +273,8 @@ async fn cmd_status(
             println!("{}", serde_json::to_string_pretty(&results)?);
         }
     } else {
-        let device = resolve_and_probe(cli, http_client).await?;
+        let targets = resolve_and_probe_targets(cli, http_client).await?;
+        let device = &targets[0];
         let status = device.status().await?;
 
         if json_output {
@@ -255,48 +293,58 @@ async fn cmd_switch(
     action: SwitchAction,
     json_output: bool,
 ) -> Result<()> {
-    let device = resolve_and_probe(cli, http_client).await?;
+    let targets = resolve_and_probe_targets(cli, http_client).await?;
 
-    match action {
-        SwitchAction::Status { id } => {
-            let status = device.switch_status(id).await?;
-            if json_output {
-                println!("{}", serde_json::to_string_pretty(&status)?);
-            } else {
-                output::print_switch_status(&status);
+    for device in &targets {
+        let name = device.info().display_name().to_string();
+
+        match action {
+            SwitchAction::Status { id } => {
+                let status = device.switch_status(id).await?;
+                if json_output {
+                    println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+                        "device": name,
+                        "status": status,
+                    }))?);
+                } else {
+                    if targets.len() > 1 {
+                        print!("{name}: ");
+                    }
+                    output::print_switch_status(&status);
+                }
             }
-        }
-        SwitchAction::On { id } => {
-            let result = device.switch_set(id, true).await?;
-            if json_output {
-                println!("{}", serde_json::json!({ "was_on": result.was_on }));
-            } else {
-                println!(
-                    "Switch {id}: ON (was {})",
-                    if result.was_on { "on" } else { "off" }
-                );
+            SwitchAction::On { id } => {
+                let result = device.switch_set(id, true).await?;
+                if json_output {
+                    println!("{}", serde_json::json!({ "device": name, "was_on": result.was_on }));
+                } else {
+                    println!(
+                        "{name}: Switch {id} ON (was {})",
+                        if result.was_on { "on" } else { "off" }
+                    );
+                }
             }
-        }
-        SwitchAction::Off { id } => {
-            let result = device.switch_set(id, false).await?;
-            if json_output {
-                println!("{}", serde_json::json!({ "was_on": result.was_on }));
-            } else {
-                println!(
-                    "Switch {id}: OFF (was {})",
-                    if result.was_on { "on" } else { "off" }
-                );
+            SwitchAction::Off { id } => {
+                let result = device.switch_set(id, false).await?;
+                if json_output {
+                    println!("{}", serde_json::json!({ "device": name, "was_on": result.was_on }));
+                } else {
+                    println!(
+                        "{name}: Switch {id} OFF (was {})",
+                        if result.was_on { "on" } else { "off" }
+                    );
+                }
             }
-        }
-        SwitchAction::Toggle { id } => {
-            let result = device.switch_toggle(id).await?;
-            if json_output {
-                println!("{}", serde_json::json!({ "was_on": result.was_on }));
-            } else {
-                println!(
-                    "Switch {id}: TOGGLED (was {})",
-                    if result.was_on { "on" } else { "off" }
-                );
+            SwitchAction::Toggle { id } => {
+                let result = device.switch_toggle(id).await?;
+                if json_output {
+                    println!("{}", serde_json::json!({ "device": name, "was_on": result.was_on }));
+                } else {
+                    println!(
+                        "{name}: Switch {id} TOGGLED (was {})",
+                        if result.was_on { "on" } else { "off" }
+                    );
+                }
             }
         }
     }
@@ -311,11 +359,8 @@ async fn cmd_power(
     id: u8,
     json_output: bool,
 ) -> Result<()> {
-    if all {
-        let devices = cache::load_devices()?;
-        if devices.is_empty() {
-            anyhow::bail!("no cached devices. Run 'shelly-cli discover' first.");
-        }
+    if all || cli.group.is_some() {
+        let devices = resolve_all_or_group(cli)?;
 
         if !json_output {
             println!(
@@ -358,7 +403,8 @@ async fn cmd_power(
             println!("{}", serde_json::to_string_pretty(&results)?);
         }
     } else {
-        let device = resolve_and_probe(cli, http_client).await?;
+        let targets = resolve_and_probe_targets(cli, http_client).await?;
+        let device = &targets[0];
         let reading = device.power(id).await?;
 
         if json_output {
@@ -379,11 +425,8 @@ async fn cmd_firmware(
 ) -> Result<()> {
     match action {
         FirmwareAction::Check { all } => {
-            if all {
-                let devices = cache::load_devices()?;
-                if devices.is_empty() {
-                    anyhow::bail!("no cached devices. Run 'shelly-cli discover' first.");
-                }
+            if all || cli.group.is_some() {
+                let devices = resolve_all_or_group(cli)?;
 
                 if !json_output {
                     println!(
@@ -436,7 +479,8 @@ async fn cmd_firmware(
                     println!("{}", serde_json::to_string_pretty(&results)?);
                 }
             } else {
-                let device = resolve_and_probe(cli, http_client).await?;
+                let targets = resolve_and_probe_targets(cli, http_client).await?;
+                let device = &targets[0];
                 let fw = device.firmware_check().await?;
 
                 if json_output {
@@ -473,7 +517,8 @@ async fn cmd_config(
 ) -> Result<()> {
     match action {
         ConfigAction::Get => {
-            let device = resolve_and_probe(cli, http_client).await?;
+            let targets = resolve_and_probe_targets(cli, http_client).await?;
+            let device = &targets[0];
             let config = device.config_get().await?;
             println!("{}", serde_json::to_string_pretty(&config)?);
         }
@@ -487,14 +532,58 @@ async fn cmd_reboot(
     http_client: &reqwest::Client,
     json_output: bool,
 ) -> Result<()> {
-    let device = resolve_and_probe(cli, http_client).await?;
-    device.reboot().await?;
+    let targets = resolve_and_probe_targets(cli, http_client).await?;
 
-    if json_output {
-        println!("{}", serde_json::json!({ "status": "rebooting" }));
-    } else {
-        println!("Device {} is rebooting.", device.info().display_name());
+    for device in &targets {
+        device.reboot().await?;
+
+        if json_output {
+            println!("{}", serde_json::json!({
+                "device": device.info().display_name(),
+                "status": "rebooting",
+            }));
+        } else {
+            println!("Device {} is rebooting.", device.info().display_name());
+        }
     }
 
     Ok(())
+}
+
+async fn cmd_watch(
+    cli: &Cli,
+    http_client: &reqwest::Client,
+    interval_secs: u64,
+) -> Result<()> {
+    let devices = resolve_all_or_group(cli)?;
+    let interval = Duration::from_secs(interval_secs);
+    watch::run(&devices, http_client, interval).await
+}
+
+async fn cmd_health(
+    cli: &Cli,
+    http_client: &reqwest::Client,
+    json_output: bool,
+) -> Result<()> {
+    let devices = resolve_all_or_group(cli)?;
+
+    let mut reports = Vec::new();
+    for info in &devices {
+        let report = health::check_device(info, http_client).await;
+        reports.push(report);
+    }
+
+    if json_output {
+        println!("{}", serde_json::to_string_pretty(&reports)?);
+    } else {
+        health::print_health_report(&reports);
+    }
+
+    Ok(())
+}
+
+fn cmd_group(action: GroupAction) -> Result<()> {
+    match action {
+        GroupAction::List => groups::list_groups(),
+    }
 }

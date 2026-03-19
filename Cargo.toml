@@ -23,6 +23,8 @@ anyhow = "1"
 async-trait = "0.1"
 toml = "0.8"
 clap_complete = "4"
+crossterm = "0.28"
+chrono = "0.4"
 
 [profile.release]
 strip = true
