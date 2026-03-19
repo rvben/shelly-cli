@@ -2,7 +2,26 @@ use std::io::IsTerminal;
 
 use owo_colors::OwoColorize;
 
+use crate::errors::CliError;
 use crate::model::{DeviceInfo, DeviceStatus, PowerReading, SwitchStatus};
+
+/// Wrap successful data in a `{"ok": true, "data": ...}` envelope and print to stdout.
+pub fn print_json_success<T: serde::Serialize>(data: &T) {
+    let envelope = serde_json::json!({
+        "ok": true,
+        "data": data,
+    });
+    println!("{}", serde_json::to_string_pretty(&envelope).unwrap());
+}
+
+/// Print a structured JSON error envelope to stdout.
+pub fn print_json_error(err: &CliError) {
+    let envelope = serde_json::json!({
+        "ok": false,
+        "error": err,
+    });
+    println!("{}", serde_json::to_string_pretty(&envelope).unwrap());
+}
 
 pub fn use_color() -> bool {
     std::io::stdout().is_terminal()

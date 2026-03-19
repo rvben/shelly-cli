@@ -101,7 +101,7 @@ pub fn list_groups(json: bool) -> Result<()> {
     let groups = load_groups()?;
     if groups.is_empty() {
         if json {
-            println!("[]");
+            crate::output::print_json_success(&Vec::<serde_json::Value>::new());
         } else {
             eprintln!("No groups defined. Create groups in ~/.config/shelly-cli/groups.toml");
             eprintln!();
@@ -134,7 +134,7 @@ pub fn list_groups(json: bool) -> Result<()> {
                 "description": description,
             }));
         }
-        println!("{}", serde_json::to_string_pretty(&entries)?);
+        crate::output::print_json_success(&entries);
         return Ok(());
     }
 

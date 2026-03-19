@@ -2,6 +2,7 @@ mod api;
 mod cache;
 mod cli;
 mod config;
+mod errors;
 mod groups;
 mod health;
 mod model;
@@ -23,8 +24,19 @@ use model::DeviceInfo;
 #[tokio::main]
 async fn main() {
     if let Err(err) = run().await {
-        eprintln!("Error: {err:#}");
-        std::process::exit(1);
+        let cli_error = errors::classify_error(&err);
+        let exit_code = cli_error.code.exit_code();
+
+        let json_mode = std::env::args().any(|a| a == "--json" || a == "-j")
+            || !std::io::stdout().is_terminal();
+
+        if json_mode {
+            output::print_json_error(&cli_error);
+        } else {
+            eprintln!("Error: {}", cli_error.message);
+        }
+
+        std::process::exit(exit_code);
     }
 }
 
@@ -229,7 +241,7 @@ async fn cmd_discover(
     }
 
     if json_output {
-        println!("{}", serde_json::to_string_pretty(&devices)?);
+        output::print_json_success(&devices);
     } else {
         output::print_device_table(&devices);
     }
@@ -255,7 +267,7 @@ async fn cmd_devices(
     }
 
     if json_output {
-        println!("{}", serde_json::to_string_pretty(&devices)?);
+        output::print_json_success(&devices);
     } else {
         output::print_device_table(&devices);
     }
@@ -303,7 +315,7 @@ async fn cmd_status(
         }
 
         if json_output {
-            println!("{}", serde_json::to_string_pretty(&results)?);
+            output::print_json_success(&results);
         }
     } else {
         let targets = resolve_and_probe_targets(cli, http_client).await?;
@@ -311,7 +323,7 @@ async fn cmd_status(
         let status = device.status().await?;
 
         if json_output {
-            println!("{}", serde_json::to_string_pretty(&status)?);
+            output::print_json_success(&status);
         } else {
             output::print_status(device.info().display_name(), &status);
         }
@@ -386,7 +398,7 @@ async fn cmd_switch(
     }
 
     if json_output {
-        println!("{}", serde_json::to_string_pretty(&json_results)?);
+        output::print_json_success(&json_results);
     }
 
     Ok(())
@@ -446,7 +458,7 @@ async fn cmd_power(
         }
 
         if json_output {
-            println!("{}", serde_json::to_string_pretty(&results)?);
+            output::print_json_success(&results);
         }
     } else {
         let targets = resolve_and_probe_targets(cli, http_client).await?;
@@ -454,7 +466,7 @@ async fn cmd_power(
         let reading = device.power(id).await?;
 
         if json_output {
-            println!("{}", serde_json::to_string_pretty(&reading)?);
+            output::print_json_success(&reading);
         } else {
             output::print_power_reading(device.info().display_name(), &reading);
         }
@@ -528,7 +540,7 @@ async fn cmd_firmware(
                 }
 
                 if json_output {
-                    println!("{}", serde_json::to_string_pretty(&results)?);
+                    output::print_json_success(&results);
                 }
             } else {
                 let targets = resolve_and_probe_targets(cli, http_client).await?;
@@ -536,15 +548,12 @@ async fn cmd_firmware(
                 let fw = device.firmware_check().await?;
 
                 if json_output {
-                    println!(
-                        "{}",
-                        serde_json::to_string_pretty(&serde_json::json!({
-                            "current_version": fw.current_version,
-                            "has_update": fw.has_update,
-                            "stable_version": fw.stable_version,
-                            "beta_version": fw.beta_version,
-                        }))?
-                    );
+                    output::print_json_success(&serde_json::json!({
+                        "current_version": fw.current_version,
+                        "has_update": fw.has_update,
+                        "stable_version": fw.stable_version,
+                        "beta_version": fw.beta_version,
+                    }));
                 } else {
                     println!("Current: {}", fw.current_version);
                     println!("Update available: {}", fw.has_update);
@@ -572,7 +581,7 @@ async fn cmd_config(
             let targets = resolve_and_probe_targets(cli, http_client).await?;
             let device = &targets[0];
             let config = device.config_get().await?;
-            println!("{}", serde_json::to_string_pretty(&config)?);
+            output::print_json_success(&config);
         }
     }
 
@@ -590,7 +599,7 @@ async fn cmd_reboot(
         device.reboot().await?;
 
         if json_output {
-            println!("{}", serde_json::json!({
+            output::print_json_success(&serde_json::json!({
                 "device": device.info().display_name(),
                 "status": "rebooting",
             }));
@@ -634,7 +643,7 @@ async fn cmd_health(
     }
 
     if json_output {
-        println!("{}", serde_json::to_string_pretty(&reports)?);
+        output::print_json_success(&reports);
     } else {
         health::print_health_report(&reports);
     }

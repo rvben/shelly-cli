@@ -1,277 +1,96 @@
-use serde::Serialize;
+use clap::CommandFactory;
+use serde_json::{json, Value};
 
-#[derive(Serialize)]
-pub struct SchemaCommand {
-    pub description: String,
-    pub args: Vec<SchemaArg>,
-    pub mutating: bool,
-    pub output_fields: Vec<String>,
-}
+use crate::cli::Cli;
 
-#[derive(Serialize)]
-pub struct SchemaArg {
-    pub name: String,
-    pub description: String,
-    pub required: bool,
-}
+/// Generate a machine-readable schema from clap's command introspection.
+///
+/// Nested subcommands (e.g. `switch on`, `firmware check`) are flattened into
+/// keys like `"switch on"`, `"firmware check"`, etc.
+pub fn generate_schema() -> Value {
+    let cmd = Cli::command();
+    let version = cmd.get_version().unwrap_or("unknown");
 
-pub fn generate_schema() -> serde_json::Value {
+    let mutating_commands = ["on", "off", "toggle", "reboot", "switch on", "switch off", "switch toggle"];
+
+    let global_args: Vec<Value> = cmd
+        .get_arguments()
+        .filter(|a| {
+            let id = a.get_id().as_str();
+            id != "help" && id != "version"
+        })
+        .map(|a| {
+            json!({
+                "name": format!("--{}", a.get_id()),
+                "required": a.is_required_set(),
+                "description": a.get_help().map(|h| h.to_string()).unwrap_or_default(),
+            })
+        })
+        .collect();
+
     let mut commands = serde_json::Map::new();
 
-    commands.insert(
-        "discover".into(),
-        serde_json::to_value(SchemaCommand {
-            description: "Scan network for Shelly devices".into(),
-            args: vec![SchemaArg {
-                name: "--subnet".into(),
-                description: "Subnet to scan in CIDR notation (e.g. 10.10.20.0/24)".into(),
-                required: false,
-            }],
-            mutating: false,
-            output_fields: vec![
-                "name", "ip", "gen", "model", "firmware_version", "mac",
-            ]
-            .into_iter()
-            .map(String::from)
-            .collect(),
-        })
-        .unwrap(),
-    );
+    for sub in cmd.get_subcommands() {
+        let name = sub.get_name();
+        if name == "help" {
+            continue;
+        }
 
-    commands.insert(
-        "devices".into(),
-        serde_json::to_value(SchemaCommand {
-            description: "List known/cached devices".into(),
-            args: vec![SchemaArg {
-                name: "--refresh".into(),
-                description: "Re-scan network before listing".into(),
-                required: false,
-            }],
-            mutating: false,
-            output_fields: vec![
-                "name", "ip", "gen", "model", "firmware_version", "mac",
-            ]
-            .into_iter()
-            .map(String::from)
-            .collect(),
-        })
-        .unwrap(),
-    );
+        let nested: Vec<_> = sub.get_subcommands().collect();
 
-    commands.insert(
-        "status".into(),
-        serde_json::to_value(SchemaCommand {
-            description: "Get device status".into(),
-            args: vec![
-                SchemaArg {
-                    name: "--host".into(),
-                    description: "Target device by IP".into(),
-                    required: false,
-                },
-                SchemaArg {
-                    name: "--name".into(),
-                    description: "Target device by name".into(),
-                    required: false,
-                },
-                SchemaArg {
-                    name: "--all".into(),
-                    description: "Query all known devices".into(),
-                    required: false,
-                },
-            ],
-            mutating: false,
-            output_fields: vec![
-                "switches", "inputs", "wifi", "uptime", "temperature",
-            ]
-            .into_iter()
-            .map(String::from)
-            .collect(),
-        })
-        .unwrap(),
-    );
+        if nested.iter().any(|s| s.get_name() != "help") {
+            // Flatten nested subcommands: "switch on", "firmware check", etc.
+            for nested_sub in &nested {
+                if nested_sub.get_name() == "help" {
+                    continue;
+                }
+                let flat_name = format!("{} {}", name, nested_sub.get_name());
+                let args = build_args(nested_sub);
+                let is_mutating = mutating_commands.contains(&flat_name.as_str());
 
-    commands.insert(
-        "switch status".into(),
-        serde_json::to_value(SchemaCommand {
-            description: "Get switch/relay status".into(),
-            args: vec![
-                SchemaArg {
-                    name: "--host".into(),
-                    description: "Target device by IP".into(),
-                    required: false,
-                },
-                SchemaArg {
-                    name: "--id".into(),
-                    description: "Switch ID (default: 0)".into(),
-                    required: false,
-                },
-            ],
-            mutating: false,
-            output_fields: vec![
-                "id", "output", "power_watts", "voltage", "current", "total_energy_wh",
-            ]
-            .into_iter()
-            .map(String::from)
-            .collect(),
-        })
-        .unwrap(),
-    );
+                commands.insert(
+                    flat_name,
+                    json!({
+                        "description": nested_sub.get_about().map(|h| h.to_string()).unwrap_or_default(),
+                        "mutating": is_mutating,
+                        "args": args,
+                    }),
+                );
+            }
+        } else {
+            let args = build_args(sub);
+            let is_mutating = mutating_commands.contains(&name);
 
-    commands.insert(
-        "switch on".into(),
-        serde_json::to_value(SchemaCommand {
-            description: "Turn switch on".into(),
-            args: vec![
-                SchemaArg {
-                    name: "--host".into(),
-                    description: "Target device by IP".into(),
-                    required: false,
-                },
-                SchemaArg {
-                    name: "--id".into(),
-                    description: "Switch ID (default: 0)".into(),
-                    required: false,
-                },
-            ],
-            mutating: true,
-            output_fields: vec!["was_on".into()],
-        })
-        .unwrap(),
-    );
+            commands.insert(
+                name.to_string(),
+                json!({
+                    "description": sub.get_about().map(|h| h.to_string()).unwrap_or_default(),
+                    "mutating": is_mutating,
+                    "args": args,
+                }),
+            );
+        }
+    }
 
-    commands.insert(
-        "switch off".into(),
-        serde_json::to_value(SchemaCommand {
-            description: "Turn switch off".into(),
-            args: vec![
-                SchemaArg {
-                    name: "--host".into(),
-                    description: "Target device by IP".into(),
-                    required: false,
-                },
-                SchemaArg {
-                    name: "--id".into(),
-                    description: "Switch ID (default: 0)".into(),
-                    required: false,
-                },
-            ],
-            mutating: true,
-            output_fields: vec!["was_on".into()],
-        })
-        .unwrap(),
-    );
+    json!({
+        "version": version,
+        "global_flags": global_args,
+        "commands": commands,
+    })
+}
 
-    commands.insert(
-        "switch toggle".into(),
-        serde_json::to_value(SchemaCommand {
-            description: "Toggle switch state".into(),
-            args: vec![
-                SchemaArg {
-                    name: "--host".into(),
-                    description: "Target device by IP".into(),
-                    required: false,
-                },
-                SchemaArg {
-                    name: "--id".into(),
-                    description: "Switch ID (default: 0)".into(),
-                    required: false,
-                },
-            ],
-            mutating: true,
-            output_fields: vec!["was_on".into()],
+fn build_args(cmd: &clap::Command) -> Vec<Value> {
+    cmd.get_arguments()
+        .filter(|a| {
+            let id = a.get_id().as_str();
+            id != "help" && id != "version"
         })
-        .unwrap(),
-    );
-
-    commands.insert(
-        "power".into(),
-        serde_json::to_value(SchemaCommand {
-            description: "Get power/energy readings".into(),
-            args: vec![
-                SchemaArg {
-                    name: "--host".into(),
-                    description: "Target device by IP".into(),
-                    required: false,
-                },
-                SchemaArg {
-                    name: "--all".into(),
-                    description: "Query all known devices".into(),
-                    required: false,
-                },
-            ],
-            mutating: false,
-            output_fields: vec![
-                "power_watts",
-                "voltage",
-                "current",
-                "total_energy_wh",
-            ]
-            .into_iter()
-            .map(String::from)
-            .collect(),
+        .map(|a| {
+            json!({
+                "name": format!("--{}", a.get_id()),
+                "required": a.is_required_set(),
+                "description": a.get_help().map(|h| h.to_string()).unwrap_or_default(),
+            })
         })
-        .unwrap(),
-    );
-
-    commands.insert(
-        "firmware check".into(),
-        serde_json::to_value(SchemaCommand {
-            description: "Check for firmware updates".into(),
-            args: vec![
-                SchemaArg {
-                    name: "--host".into(),
-                    description: "Target device by IP".into(),
-                    required: false,
-                },
-                SchemaArg {
-                    name: "--all".into(),
-                    description: "Check all known devices".into(),
-                    required: false,
-                },
-            ],
-            mutating: false,
-            output_fields: vec![
-                "current_version",
-                "has_update",
-                "stable_version",
-                "beta_version",
-            ]
-            .into_iter()
-            .map(String::from)
-            .collect(),
-        })
-        .unwrap(),
-    );
-
-    commands.insert(
-        "config get".into(),
-        serde_json::to_value(SchemaCommand {
-            description: "Get device configuration".into(),
-            args: vec![SchemaArg {
-                name: "--host".into(),
-                description: "Target device by IP".into(),
-                required: false,
-            }],
-            mutating: false,
-            output_fields: vec!["config".into()],
-        })
-        .unwrap(),
-    );
-
-    commands.insert(
-        "reboot".into(),
-        serde_json::to_value(SchemaCommand {
-            description: "Reboot a device".into(),
-            args: vec![SchemaArg {
-                name: "--host".into(),
-                description: "Target device by IP".into(),
-                required: false,
-            }],
-            mutating: true,
-            output_fields: vec!["status".into()],
-        })
-        .unwrap(),
-    );
-
-    serde_json::json!({ "commands": commands })
+        .collect()
 }
