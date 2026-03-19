@@ -62,7 +62,7 @@ pub fn resolve_group(group_name: &str) -> Result<Vec<DeviceInfo>> {
 
     let all_devices = cache::load_devices()?;
     if all_devices.is_empty() {
-        anyhow::bail!("no cached devices. Run 'shelly-cli discover' first.");
+        anyhow::bail!("no cached devices. Run 'shelly discover' first.");
     }
 
     let matched = match group_def {

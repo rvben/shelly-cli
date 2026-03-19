@@ -6,7 +6,7 @@ description = "CLI for managing and controlling Shelly devices"
 license = "MIT"
 
 [[bin]]
-name = "shelly-cli"
+name = "shelly"
 path = "src/main.rs"
 
 [dependencies]
@@ -20,6 +20,7 @@ ipnet = "2"
 anyhow = "1"
 toml = "0.8"
 clap_complete = "4"
+strsim = "0.11"
 crossterm = "0.28"
 chrono = "0.4"
 

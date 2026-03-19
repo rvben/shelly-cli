@@ -1,26 +1,39 @@
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "shelly-cli", about = "CLI for managing Shelly devices", version)]
+#[command(
+    name = "shelly",
+    about = "CLI for managing Shelly devices",
+    version,
+    after_long_help = "\
+Examples:
+  shelly discover --subnet 192.168.1.0/24
+  shelly on \"Kitchen Light\"
+  shelly status -n \"Living Room\"
+  shelly power -a
+  shelly health
+  shelly watch
+  shelly -g lights off"
+)]
 pub struct Cli {
     /// Target device by IP address
     #[arg(long, global = true)]
     pub host: Option<String>,
 
     /// Target device by name (uses cached device list)
-    #[arg(long, global = true)]
+    #[arg(long, short = 'n', global = true)]
     pub name: Option<String>,
 
     /// Target a device group (defined in groups.toml)
-    #[arg(long, global = true)]
+    #[arg(long, short = 'g', global = true)]
     pub group: Option<String>,
 
     /// Output as JSON (auto-enabled when stdout is not a terminal)
-    #[arg(long, global = true)]
+    #[arg(long, short = 'j', global = true)]
     pub json: bool,
 
     /// Suppress non-data output
-    #[arg(long, global = true)]
+    #[arg(long, short = 'q', global = true)]
     pub quiet: bool,
 
     /// HTTP timeout in milliseconds
@@ -50,7 +63,7 @@ pub enum Command {
     /// Get device status
     Status {
         /// Query all known devices
-        #[arg(long)]
+        #[arg(long, short = 'a')]
         all: bool,
     },
 
@@ -60,10 +73,37 @@ pub enum Command {
         action: SwitchAction,
     },
 
+    /// Turn device(s) on
+    On {
+        /// Device name (positional for convenience)
+        device: Option<String>,
+        /// Switch ID (default: 0)
+        #[arg(long, default_value = "0")]
+        id: u8,
+    },
+
+    /// Turn device(s) off
+    Off {
+        /// Device name (positional for convenience)
+        device: Option<String>,
+        /// Switch ID (default: 0)
+        #[arg(long, default_value = "0")]
+        id: u8,
+    },
+
+    /// Toggle device(s)
+    Toggle {
+        /// Device name (positional for convenience)
+        device: Option<String>,
+        /// Switch ID (default: 0)
+        #[arg(long, default_value = "0")]
+        id: u8,
+    },
+
     /// Energy and power monitoring
     Power {
         /// Query all known devices
-        #[arg(long)]
+        #[arg(long, short = 'a')]
         all: bool,
 
         /// Meter ID (default: 0)
@@ -103,6 +143,7 @@ pub enum Command {
     },
 
     /// Dump all commands as JSON for agent introspection
+    #[command(hide = true)]
     Schema,
 
     /// Generate shell completions
@@ -145,7 +186,7 @@ pub enum FirmwareAction {
     /// Check for available updates
     Check {
         /// Check all known devices
-        #[arg(long)]
+        #[arg(long, short = 'a')]
         all: bool,
     },
 }

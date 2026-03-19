@@ -140,7 +140,7 @@ fn render(stdout: &mut io::Stdout, snapshots: &[DeviceSnapshot]) -> Result<()> {
     )?;
 
     let now = chrono::Local::now().format("%H:%M:%S");
-    writeln!(stdout, " shelly-cli watch  |  {now}  |  press q to quit\r")?;
+    writeln!(stdout, " shelly watch  |  {now}  |  press q to quit\r")?;
     writeln!(stdout, "\r")?;
 
     writeln!(

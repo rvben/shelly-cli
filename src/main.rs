@@ -20,8 +20,15 @@ use cli::{Cli, Command, ConfigAction, FirmwareAction, GroupAction, SwitchAction}
 use model::DeviceInfo;
 
 #[tokio::main]
-async fn main() -> Result<()> {
-    let cli = Cli::parse();
+async fn main() {
+    if let Err(err) = run().await {
+        eprintln!("Error: {err:#}");
+        std::process::exit(1);
+    }
+}
+
+async fn run() -> Result<()> {
+    let mut cli = Cli::parse();
 
     let json_output = cli.json || !std::io::stdout().is_terminal();
     let timeout = Duration::from_millis(cli.timeout);
@@ -29,6 +36,20 @@ async fn main() -> Result<()> {
     let http_client = reqwest::Client::builder()
         .timeout(timeout)
         .build()?;
+
+    // Convert top-level On/Off/Toggle: extract positional device name and delegate to cmd_switch
+    let shortcut_action = match &cli.command {
+        Command::On { device, id } => Some((device.clone(), SwitchAction::On { id: *id })),
+        Command::Off { device, id } => Some((device.clone(), SwitchAction::Off { id: *id })),
+        Command::Toggle { device, id } => Some((device.clone(), SwitchAction::Toggle { id: *id })),
+        _ => None,
+    };
+    if let Some((device, action)) = shortcut_action {
+        if let Some(dev) = device {
+            cli.name = cli.name.or(Some(dev));
+        }
+        return cmd_switch(&cli, &http_client, action, json_output).await;
+    }
 
     match cli.command {
         Command::Discover { subnet } => {
@@ -73,11 +94,13 @@ async fn main() -> Result<()> {
             clap_complete::generate(
                 shell,
                 &mut <Cli as clap::CommandFactory>::command(),
-                "shelly-cli",
+                "shelly",
                 &mut std::io::stdout(),
             );
             Ok(())
         }
+        // Already handled above
+        Command::On { .. } | Command::Off { .. } | Command::Toggle { .. } => unreachable!(),
     }
 }
 
@@ -112,8 +135,7 @@ fn resolve_targets(cli: &Cli) -> Result<Vec<DeviceInfo>> {
 
     if let Some(ref name) = cli.name {
         let devices = cache::load_devices()?;
-        let info = cache::find_device_by_name(&devices, name)
-            .ok_or_else(|| anyhow::anyhow!("device '{name}' not found in cache. Run 'shelly-cli discover' first."))?;
+        let info = cache::find_device_by_name_with_suggestions(&devices, name)?;
         return Ok(vec![info]);
     }
 
@@ -147,7 +169,7 @@ fn resolve_all_or_group(cli: &Cli) -> Result<Vec<DeviceInfo>> {
     }
     let devices = cache::load_devices()?;
     if devices.is_empty() {
-        anyhow::bail!("no cached devices. Run 'shelly-cli discover' first.");
+        anyhow::bail!("no cached devices. Run 'shelly discover' first.");
     }
     Ok(devices)
 }
@@ -216,7 +238,7 @@ async fn cmd_devices(
     let devices = cache::load_devices()?;
 
     if devices.is_empty() {
-        eprintln!("No cached devices. Run 'shelly-cli discover' first.");
+        eprintln!("No cached devices. Run 'shelly discover' first.");
         return Ok(());
     }
 
