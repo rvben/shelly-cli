@@ -29,12 +29,6 @@ pub fn load_groups() -> Result<HashMap<String, GroupDef>> {
     }
     let data = std::fs::read_to_string(&path)?;
 
-    #[derive(Deserialize)]
-    struct GroupsFile {
-        #[serde(default)]
-        groups: HashMap<String, GroupDef>,
-    }
-
     let file: GroupsFile = toml::from_str(&data)
         .with_context(|| format!("failed to parse {}", path.display()))?;
     Ok(file.groups)
@@ -104,6 +98,74 @@ pub fn resolve_group(group_name: &str) -> Result<Vec<DeviceInfo>> {
     }
 
     Ok(matched)
+}
+
+/// Serializable wrapper matching the TOML file structure.
+#[derive(Serialize, Deserialize)]
+struct GroupsFile {
+    #[serde(default)]
+    groups: HashMap<String, GroupDef>,
+}
+
+pub fn add_group(name: &str, device_names: Vec<String>) -> Result<()> {
+    let mut groups = load_groups()?;
+    if groups.contains_key(name) {
+        anyhow::bail!("group '{name}' already exists. Remove it first to redefine.");
+    }
+    groups.insert(name.to_string(), GroupDef::Names(device_names));
+
+    let file = GroupsFile { groups };
+    let data = toml::to_string_pretty(&file)
+        .context("failed to serialize groups")?;
+    std::fs::write(groups_path()?, data)?;
+    Ok(())
+}
+
+pub fn remove_group(name: &str) -> Result<()> {
+    let mut groups = load_groups()?;
+    if groups.remove(name).is_none() {
+        anyhow::bail!("group '{name}' not found");
+    }
+
+    let file = GroupsFile { groups };
+    let data = toml::to_string_pretty(&file)
+        .context("failed to serialize groups")?;
+    std::fs::write(groups_path()?, data)?;
+    Ok(())
+}
+
+pub fn show_group(name: &str, json: bool) -> Result<()> {
+    let groups = load_groups()?;
+    let group_def = groups
+        .get(name)
+        .ok_or_else(|| anyhow::anyhow!("group '{name}' not found"))?;
+
+    let all_devices = cache::load_devices()?;
+    let matched = resolve_group_with_devices(group_def, &all_devices);
+
+    if json {
+        let entries: Vec<serde_json::Value> = matched
+            .iter()
+            .map(|d| {
+                serde_json::json!({
+                    "name": d.display_name(),
+                    "ip": d.ip.to_string(),
+                    "model": d.model,
+                    "generation": d.generation.to_string(),
+                })
+            })
+            .collect();
+        crate::output::print_json_success(&entries);
+    } else if matched.is_empty() {
+        println!("Group '{name}' matches no cached devices.");
+    } else {
+        println!("Group '{name}' ({} devices):", matched.len());
+        for d in &matched {
+            println!("  {} ({})", d.display_name(), d.ip);
+        }
+    }
+
+    Ok(())
 }
 
 pub fn list_groups(json: bool) -> Result<()> {

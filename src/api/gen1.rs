@@ -159,4 +159,9 @@ impl Gen1Device {
         self.get_json("/reboot").await?;
         Ok(())
     }
+
+    pub async fn firmware_update(&self) -> Result<()> {
+        self.get_json("/ota?update=true").await?;
+        Ok(())
+    }
 }

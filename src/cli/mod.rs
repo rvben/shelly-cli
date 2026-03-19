@@ -189,6 +189,12 @@ pub enum FirmwareAction {
         #[arg(long, short = 'a')]
         all: bool,
     },
+    /// Update firmware to latest stable version
+    Update {
+        /// Update all known devices
+        #[arg(long, short = 'a')]
+        all: bool,
+    },
 }
 
 #[derive(Subcommand, Clone)]
@@ -201,4 +207,22 @@ pub enum ConfigAction {
 pub enum GroupAction {
     /// List all defined groups
     List,
+    /// Add a new group
+    Add {
+        /// Group name
+        name: String,
+        /// Device names to include
+        #[arg(required = true)]
+        devices: Vec<String>,
+    },
+    /// Remove a group
+    Remove {
+        /// Group name to remove
+        name: String,
+    },
+    /// Show devices in a group
+    Show {
+        /// Group name
+        name: String,
+    },
 }

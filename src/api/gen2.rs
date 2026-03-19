@@ -145,4 +145,10 @@ impl Gen2Device {
         self.rpc_call("Shelly.Reboot", None).await?;
         Ok(())
     }
+
+    pub async fn firmware_update(&self) -> Result<()> {
+        let params = serde_json::json!({ "stage": "stable" });
+        self.rpc_call("Shelly.Update", Some(params)).await?;
+        Ok(())
+    }
 }
