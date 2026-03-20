@@ -140,7 +140,7 @@ impl Gen2Device {
             .and_then(|v| v.as_str())
             .map(String::from);
 
-        let has_update = stable.is_some() || beta.is_some();
+        let has_update = stable.is_some();
 
         Ok(FirmwareInfo {
             current_version: current,

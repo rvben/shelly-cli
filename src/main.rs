@@ -774,15 +774,15 @@ async fn cmd_firmware(
 
                 if !json_output {
                     let header = format!(
-                        "{:<30} {:<16} {:<10} {:<20} {:<20}",
+                        "{:<30} {:<16} {:<12} {:<12} {:<20}",
                         "Device", "IP", "Current", "Stable", "Beta"
                     );
                     if output::use_color() {
                         println!("{}", header.bold());
-                        println!("{}", "-".repeat(96).dimmed());
+                        println!("{}", "-".repeat(90).dimmed());
                     } else {
                         println!("{header}");
-                        println!("{}", "-".repeat(96));
+                        println!("{}", "-".repeat(90));
                     }
                 }
 
@@ -803,13 +803,14 @@ async fn cmd_firmware(
                                     "beta": fw.beta_version,
                                 }));
                             } else {
+                                let update_marker = if fw.has_update { " *" } else { "" };
                                 println!(
-                                    "{:<30} {:<16} {:<10} {:<20} {:<20}",
+                                    "{:<30} {:<16} {:<12} {:<12} {:<20}",
                                     info.display_name(),
                                     info.ip,
-                                    fw.current_version,
-                                    fw.stable_version.as_deref().unwrap_or("-"),
-                                    fw.beta_version.as_deref().unwrap_or("-"),
+                                    output::short_fw(&fw.current_version),
+                                    fw.stable_version.as_deref().map(output::short_fw).unwrap_or("-"),
+                                    format!("{}{update_marker}", fw.beta_version.as_deref().map(output::short_fw).unwrap_or("-")),
                                 );
                             }
                         }
