@@ -27,6 +27,21 @@ pub fn use_color() -> bool {
     std::io::stdout().is_terminal()
 }
 
+/// Shorten firmware version for display: extract version from Gen1's long format.
+fn short_fw(fw: &str) -> &str {
+    // Gen1: "20230913-113709/v1.14.0-gcb84623" → "v1.14.0"
+    if let Some(rest) = fw.strip_prefix("20")
+        && let Some(slash_pos) = rest.find('/')
+    {
+        let version_part = &fw[slash_pos + 4..]; // skip "202.../v"
+        if let Some(dash) = version_part.find('-') {
+            return &version_part[..dash];
+        }
+        return version_part;
+    }
+    fw
+}
+
 pub fn print_device_table(devices: &[DeviceInfo]) {
     if devices.is_empty() {
         eprintln!("No devices found.");
@@ -35,32 +50,43 @@ pub fn print_device_table(devices: &[DeviceInfo]) {
 
     let color = use_color();
     let header = format!(
-        "{:<30} {:<16} {:<5} {:<12} {:<10} {:<18}",
+        "{:<34} {:<16} {:<5} {:<14} {:<12} {}",
         "Name", "IP", "Gen", "Model", "FW", "MAC"
     );
     if color {
         println!("{}", header.bold());
+        println!("{}", "-".repeat(97).dimmed());
     } else {
         println!("{header}");
-    }
-
-    let sep = "-".repeat(95);
-    if color {
-        println!("{}", sep.dimmed());
-    } else {
-        println!("{sep}");
+        println!("{}", "-".repeat(97));
     }
 
     for d in devices {
-        println!(
-            "{:<30} {:<16} {:<5} {:<12} {:<10} {:<18}",
-            d.display_name(),
-            d.ip,
-            d.generation,
-            d.model,
-            d.firmware_version,
-            d.mac,
-        );
+        let name = d.display_name();
+        let fw = short_fw(&d.firmware_version);
+        let gen_str = format!("{}", d.generation);
+
+        if color {
+            let gen_colored = match d.generation {
+                crate::model::DeviceGeneration::Gen1 => gen_str.dimmed().to_string(),
+                crate::model::DeviceGeneration::Gen2 => gen_str.to_string(),
+                crate::model::DeviceGeneration::Gen3 => gen_str.green().to_string(),
+            };
+            println!(
+                " {:<33} {:<16} {:<5} {:<14} {:<12} {}",
+                name.bold(),
+                d.ip,
+                gen_colored,
+                d.model,
+                fw,
+                d.mac.dimmed(),
+            );
+        } else {
+            println!(
+                " {:<33} {:<16} {:<5} {:<14} {:<12} {}",
+                name, d.ip, gen_str, d.model, fw, d.mac,
+            );
+        }
     }
 }
 
