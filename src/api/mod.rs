@@ -96,6 +96,13 @@ impl ShellyDevice {
             Self::Gen2(d) => d.firmware_update().await,
         }
     }
+
+    pub async fn set_name(&self, name: &str) -> Result<()> {
+        match self {
+            Self::Gen1(d) => d.set_name(name).await,
+            Self::Gen2(d) => d.set_name(name).await,
+        }
+    }
 }
 
 pub fn create_device(info: DeviceInfo, client: reqwest::Client) -> ShellyDevice {

@@ -151,4 +151,12 @@ impl Gen2Device {
         self.rpc_call("Shelly.Update", Some(params)).await?;
         Ok(())
     }
+
+    pub async fn set_name(&self, name: &str) -> Result<()> {
+        let params = serde_json::json!({
+            "config": { "device": { "name": name } }
+        });
+        self.rpc_call("Sys.SetConfig", Some(params)).await?;
+        Ok(())
+    }
 }

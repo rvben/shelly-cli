@@ -123,6 +123,12 @@ pub enum Command {
         action: ConfigAction,
     },
 
+    /// Rename a device
+    Rename {
+        /// New name for the device
+        new_name: String,
+    },
+
     /// Reboot a device
     Reboot,
 

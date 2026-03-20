@@ -86,6 +86,9 @@ async fn run() -> Result<()> {
         Command::Config { ref action } => {
             cmd_config(&cli, &http_client, action.clone()).await
         }
+        Command::Rename { ref new_name } => {
+            cmd_rename(&cli, &http_client, new_name, json_output).await
+        }
         Command::Reboot => {
             cmd_reboot(&cli, &http_client, json_output).await
         }
@@ -697,6 +700,42 @@ async fn cmd_reboot(
         } else {
             println!("Device {} is rebooting.", device.info().display_name());
         }
+    }
+
+    Ok(())
+}
+
+async fn cmd_rename(
+    cli: &Cli,
+    http_client: &reqwest::Client,
+    new_name: &str,
+    json_output: bool,
+) -> Result<()> {
+    let targets = resolve_and_probe_targets(cli, http_client).await?;
+
+    if targets.len() != 1 {
+        anyhow::bail!("rename requires exactly one target device (got {})", targets.len());
+    }
+
+    let device = &targets[0];
+    let old_name = device.info().display_name().to_string();
+    device.set_name(new_name).await?;
+
+    // Update the cached device list with the new name
+    if let Ok(mut devices) = cache::load_devices()
+        && let Some(cached) = devices.iter_mut().find(|d| d.ip == device.info().ip)
+    {
+        cached.name = Some(new_name.to_string());
+        let _ = cache::save_devices(&devices);
+    }
+
+    if json_output {
+        output::print_json_success(&serde_json::json!({
+            "device": old_name,
+            "new_name": new_name,
+        }));
+    } else {
+        println!("Renamed '{}' → '{}'", old_name, new_name);
     }
 
     Ok(())

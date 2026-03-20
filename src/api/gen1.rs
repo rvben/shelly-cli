@@ -164,4 +164,20 @@ impl Gen1Device {
         self.get_json("/ota?update=true").await?;
         Ok(())
     }
+
+    pub async fn set_name(&self, name: &str) -> Result<()> {
+        let url = self.url("/settings");
+        let resp = self
+            .client
+            .get(&url)
+            .query(&[("name", name)])
+            .send()
+            .await
+            .with_context(|| format!("failed to reach {url}"))?;
+
+        if !resp.status().is_success() {
+            anyhow::bail!("HTTP {} from {url}", resp.status());
+        }
+        Ok(())
+    }
 }
