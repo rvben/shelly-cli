@@ -100,42 +100,39 @@ impl SwitchStatus {
         relay: &serde_json::Value,
         meter: Option<&serde_json::Value>,
     ) -> Self {
-        let relay: Gen1Relay =
-            serde_json::from_value(relay.clone()).unwrap_or(Gen1Relay {
-                ison: false,
-                source: None,
-                has_timer: false,
-                timer_remaining: None,
-            });
-        let meter: Option<Gen1Meter> =
-            meter.and_then(|m| serde_json::from_value(m.clone()).ok());
+        let relay: Gen1Relay = serde_json::from_value(relay.clone()).unwrap_or(Gen1Relay {
+            ison: false,
+            source: None,
+            has_timer: false,
+            timer_remaining: None,
+        });
+        let meter: Option<Gen1Meter> = meter.and_then(|m| serde_json::from_value(m.clone()).ok());
         Self::from_gen1_relay(id, &relay, meter.as_ref())
     }
 
     /// Parse from raw Gen2 JSON (used by API layer that still works with raw values).
     pub fn from_gen2_switch_json(sw: &serde_json::Value) -> Self {
-        let sw: Gen2SwitchStatus =
-            serde_json::from_value(sw.clone()).unwrap_or(Gen2SwitchStatus {
-                id: 0,
-                output: false,
-                source: None,
-                apower: None,
-                voltage: None,
-                current: None,
-                frequency: None,
-                temperature: None,
-                aenergy: None,
-                timer_started_at: None,
-                timer_duration: None,
-            });
+        let sw: Gen2SwitchStatus = serde_json::from_value(sw.clone()).unwrap_or(Gen2SwitchStatus {
+            id: 0,
+            output: false,
+            source: None,
+            apower: None,
+            voltage: None,
+            current: None,
+            frequency: None,
+            temperature: None,
+            aenergy: None,
+            timer_started_at: None,
+            timer_duration: None,
+        });
         Self::from_gen2_switch(&sw)
     }
 }
 
 impl DeviceStatus {
     pub fn from_gen1(status: &serde_json::Value) -> Self {
-        let resp: Gen1StatusResponse = serde_json::from_value(status.clone())
-            .unwrap_or(Gen1StatusResponse {
+        let resp: Gen1StatusResponse =
+            serde_json::from_value(status.clone()).unwrap_or(Gen1StatusResponse {
                 relays: Vec::new(),
                 meters: Vec::new(),
                 inputs: Vec::new(),
@@ -176,10 +173,7 @@ impl DeviceStatus {
             rssi: w.rssi.map(|v| v as i32),
         });
 
-        let temperature_c = resp
-            .tmp
-            .and_then(|t| t.t_c)
-            .or(resp.temperature);
+        let temperature_c = resp.tmp.and_then(|t| t.t_c).or(resp.temperature);
 
         Self {
             switches,
@@ -217,26 +211,33 @@ impl DeviceStatus {
         switches.sort_by_key(|s| s.id);
         inputs.sort_by_key(|i| i.id);
 
-        let wifi = status.get("wifi").and_then(|w| {
-            serde_json::from_value::<super::gen2_responses::Gen2WifiStatus>(w.clone()).ok()
-        }).map(|w| WifiStatus {
-            connected: w.status.as_deref() == Some("got ip"),
-            ssid: w.ssid,
-            ip: w.sta_ip,
-            rssi: w.rssi.map(|v| v as i32),
-        });
+        let wifi = status
+            .get("wifi")
+            .and_then(|w| {
+                serde_json::from_value::<super::gen2_responses::Gen2WifiStatus>(w.clone()).ok()
+            })
+            .map(|w| WifiStatus {
+                connected: w.status.as_deref() == Some("got ip"),
+                ssid: w.ssid,
+                ip: w.sta_ip,
+                rssi: w.rssi.map(|v| v as i32),
+            });
 
         let sys = status.get("sys").and_then(|s| {
             serde_json::from_value::<super::gen2_responses::Gen2SysStatus>(s.clone()).ok()
         });
 
-        let cloud_connected = status.get("cloud").and_then(|c| {
-            serde_json::from_value::<super::gen2_responses::Gen2Cloud>(c.clone()).ok()
-        }).and_then(|c| c.connected);
+        let cloud_connected = status
+            .get("cloud")
+            .and_then(|c| {
+                serde_json::from_value::<super::gen2_responses::Gen2Cloud>(c.clone()).ok()
+            })
+            .and_then(|c| c.connected);
 
-        let mqtt_connected = status.get("mqtt").and_then(|m| {
-            serde_json::from_value::<super::gen2_responses::Gen2Mqtt>(m.clone()).ok()
-        }).and_then(|m| m.connected);
+        let mqtt_connected = status
+            .get("mqtt")
+            .and_then(|m| serde_json::from_value::<super::gen2_responses::Gen2Mqtt>(m.clone()).ok())
+            .and_then(|m| m.connected);
 
         let temperature_c = switches.first().and_then(|s| s.temperature_c);
 

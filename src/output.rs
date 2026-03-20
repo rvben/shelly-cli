@@ -107,10 +107,16 @@ pub fn print_status(name: &str, status: &DeviceStatus) {
         );
     }
     if let Some(cloud) = status.cloud_connected {
-        println!("  Cloud: {}", if cloud { "connected" } else { "disconnected" });
+        println!(
+            "  Cloud: {}",
+            if cloud { "connected" } else { "disconnected" }
+        );
     }
     if let Some(mqtt) = status.mqtt_connected {
-        println!("  MQTT: {}", if mqtt { "connected" } else { "disconnected" });
+        println!(
+            "  MQTT: {}",
+            if mqtt { "connected" } else { "disconnected" }
+        );
     }
     if let Some(temp) = status.temperature_c {
         println!("  Temperature: {temp:.1}\u{00b0}C");
@@ -124,7 +130,11 @@ pub fn print_status(name: &str, status: &DeviceStatus) {
 pub fn print_switch_status(sw: &SwitchStatus) {
     let color = use_color();
     let state = if sw.output {
-        if color { "ON".green().to_string() } else { "ON".to_string() }
+        if color {
+            "ON".green().to_string()
+        } else {
+            "ON".to_string()
+        }
     } else if color {
         "OFF".dimmed().to_string()
     } else {

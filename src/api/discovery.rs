@@ -15,9 +15,7 @@ pub async fn scan_subnet(
     http_timeout: Duration,
     on_found: impl Fn(&DeviceInfo),
 ) -> Result<Vec<DeviceInfo>> {
-    let client = reqwest::Client::builder()
-        .timeout(http_timeout)
-        .build()?;
+    let client = reqwest::Client::builder().timeout(http_timeout).build()?;
 
     let (tx, mut rx) = mpsc::channel::<DeviceInfo>(64);
 
@@ -29,9 +27,7 @@ pub async fn scan_subnet(
             let tx = tx.clone();
             handles.push(tokio::spawn(async move {
                 let addr = IpAddr::V4(ip);
-                if let Ok(Ok(info)) =
-                    timeout(http_timeout, probe_device(addr, &client)).await
-                {
+                if let Ok(Ok(info)) = timeout(http_timeout, probe_device(addr, &client)).await {
                     let _ = tx.send(info).await;
                 }
             }));
@@ -55,10 +51,7 @@ pub async fn scan_subnet(
 }
 
 /// Enrich Gen1 devices with their name from /settings
-pub async fn enrich_gen1_name(
-    info: &mut DeviceInfo,
-    client: &reqwest::Client,
-) -> Result<()> {
+pub async fn enrich_gen1_name(info: &mut DeviceInfo, client: &reqwest::Client) -> Result<()> {
     if info.name.is_some() {
         return Ok(());
     }

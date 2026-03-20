@@ -67,27 +67,17 @@ impl Gen1Device {
 
     pub async fn switch_set(&self, id: u8, on: bool) -> Result<SwitchResult> {
         let turn = if on { "on" } else { "off" };
-        let resp = self
-            .get_json(&format!("/relay/{id}?turn={turn}"))
-            .await?;
+        let resp = self.get_json(&format!("/relay/{id}?turn={turn}")).await?;
 
-        let was_on = resp
-            .get("ison")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
+        let was_on = resp.get("ison").and_then(|v| v.as_bool()).unwrap_or(false);
 
         Ok(SwitchResult { was_on })
     }
 
     pub async fn switch_toggle(&self, id: u8) -> Result<SwitchResult> {
-        let resp = self
-            .get_json(&format!("/relay/{id}?turn=toggle"))
-            .await?;
+        let resp = self.get_json(&format!("/relay/{id}?turn=toggle")).await?;
 
-        let was_on = resp
-            .get("ison")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
+        let was_on = resp.get("ison").and_then(|v| v.as_bool()).unwrap_or(false);
 
         Ok(SwitchResult { was_on })
     }

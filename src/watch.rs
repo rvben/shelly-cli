@@ -3,8 +3,9 @@ use std::time::Duration;
 
 use anyhow::Result;
 use crossterm::{
-    cursor, execute,
+    cursor,
     event::{self, Event, KeyCode, KeyModifiers},
+    execute,
     terminal::{self, ClearType},
 };
 use owo_colors::OwoColorize;

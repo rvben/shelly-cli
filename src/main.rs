@@ -46,9 +46,7 @@ async fn run() -> Result<()> {
     let json_output = cli.json || !std::io::stdout().is_terminal();
     let timeout = Duration::from_millis(cli.timeout);
 
-    let http_client = reqwest::Client::builder()
-        .timeout(timeout)
-        .build()?;
+    let http_client = reqwest::Client::builder().timeout(timeout).build()?;
 
     // Convert top-level On/Off/Toggle: extract positional device name and delegate to cmd_switch
     let shortcut_action = match &cli.command {
@@ -65,42 +63,24 @@ async fn run() -> Result<()> {
     }
 
     match cli.command {
-        Command::Discover { subnet } => {
-            cmd_discover(subnet, timeout, json_output, cli.quiet).await
-        }
-        Command::Devices { refresh } => {
-            cmd_devices(refresh, timeout, json_output, cli.quiet).await
-        }
-        Command::Status { all } => {
-            cmd_status(&cli, &http_client, all, json_output).await
-        }
+        Command::Discover { subnet } => cmd_discover(subnet, timeout, json_output, cli.quiet).await,
+        Command::Devices { refresh } => cmd_devices(refresh, timeout, json_output, cli.quiet).await,
+        Command::Status { all } => cmd_status(&cli, &http_client, all, json_output).await,
         Command::Switch { ref action } => {
             cmd_switch(&cli, &http_client, action.clone(), json_output).await
         }
-        Command::Power { all, id } => {
-            cmd_power(&cli, &http_client, all, id, json_output).await
-        }
+        Command::Power { all, id } => cmd_power(&cli, &http_client, all, id, json_output).await,
         Command::Firmware { ref action } => {
             cmd_firmware(&cli, &http_client, action.clone(), json_output).await
         }
-        Command::Config { ref action } => {
-            cmd_config(&cli, &http_client, action.clone()).await
-        }
+        Command::Config { ref action } => cmd_config(&cli, &http_client, action.clone()).await,
         Command::Rename { ref new_name } => {
             cmd_rename(&cli, &http_client, new_name, json_output).await
         }
-        Command::Reboot => {
-            cmd_reboot(&cli, &http_client, json_output).await
-        }
-        Command::Watch { interval } => {
-            cmd_watch(&cli, &http_client, interval).await
-        }
-        Command::Health => {
-            cmd_health(&cli, &http_client, json_output).await
-        }
-        Command::Group { ref action } => {
-            cmd_group(action.clone(), json_output)
-        }
+        Command::Reboot => cmd_reboot(&cli, &http_client, json_output).await,
+        Command::Watch { interval } => cmd_watch(&cli, &http_client, interval).await,
+        Command::Health => cmd_health(&cli, &http_client, json_output).await,
+        Command::Group { ref action } => cmd_group(action.clone(), json_output),
         Command::Schema => {
             let schema = schema::generate_schema();
             println!("{}", serde_json::to_string_pretty(&schema)?);
@@ -201,7 +181,11 @@ fn resolve_all_or_group(cli: &Cli) -> Result<Vec<DeviceInfo>> {
 fn colored_on_off(on: bool, color: bool) -> String {
     let color = color && output::use_color();
     if on {
-        if color { "ON".green().to_string() } else { "ON".to_string() }
+        if color {
+            "ON".green().to_string()
+        } else {
+            "ON".to_string()
+        }
     } else if color {
         "OFF".dimmed().to_string()
     } else {
@@ -216,9 +200,7 @@ async fn cmd_discover(
     quiet: bool,
 ) -> Result<()> {
     let app_config = config::load_config()?;
-    let subnet_str = subnet_arg
-        .as_deref()
-        .unwrap_or(&app_config.network.subnet);
+    let subnet_str = subnet_arg.as_deref().unwrap_or(&app_config.network.subnet);
 
     let subnet: ipnet::Ipv4Net = subnet_str
         .parse()
@@ -235,9 +217,7 @@ async fn cmd_discover(
     })
     .await?;
 
-    let enrich_client = reqwest::Client::builder()
-        .timeout(timeout)
-        .build()?;
+    let enrich_client = reqwest::Client::builder().timeout(timeout).build()?;
 
     for device in &mut devices {
         if device.name.is_none() {
@@ -381,7 +361,8 @@ async fn cmd_switch(
             SwitchAction::On { id } => {
                 let result = device.switch_set(id, true).await?;
                 if json_output {
-                    json_results.push(serde_json::json!({ "device": name, "was_on": result.was_on }));
+                    json_results
+                        .push(serde_json::json!({ "device": name, "was_on": result.was_on }));
                 } else {
                     let on_label = colored_on_off(true, !json_output);
                     let was_label = colored_on_off(result.was_on, !json_output);
@@ -391,7 +372,8 @@ async fn cmd_switch(
             SwitchAction::Off { id } => {
                 let result = device.switch_set(id, false).await?;
                 if json_output {
-                    json_results.push(serde_json::json!({ "device": name, "was_on": result.was_on }));
+                    json_results
+                        .push(serde_json::json!({ "device": name, "was_on": result.was_on }));
                 } else {
                     let off_label = colored_on_off(false, !json_output);
                     let was_label = colored_on_off(result.was_on, !json_output);
@@ -401,7 +383,8 @@ async fn cmd_switch(
             SwitchAction::Toggle { id } => {
                 let result = device.switch_toggle(id).await?;
                 if json_output {
-                    json_results.push(serde_json::json!({ "device": name, "was_on": result.was_on }));
+                    json_results
+                        .push(serde_json::json!({ "device": name, "was_on": result.was_on }));
                 } else {
                     let was_label = colored_on_off(result.was_on, !json_output);
                     let toggled = if output::use_color() {
@@ -665,11 +648,7 @@ async fn cmd_firmware(
     Ok(())
 }
 
-async fn cmd_config(
-    cli: &Cli,
-    http_client: &reqwest::Client,
-    action: ConfigAction,
-) -> Result<()> {
+async fn cmd_config(cli: &Cli, http_client: &reqwest::Client, action: ConfigAction) -> Result<()> {
     match action {
         ConfigAction::Get => {
             let targets = resolve_and_probe_targets(cli, http_client).await?;
@@ -682,11 +661,7 @@ async fn cmd_config(
     Ok(())
 }
 
-async fn cmd_reboot(
-    cli: &Cli,
-    http_client: &reqwest::Client,
-    json_output: bool,
-) -> Result<()> {
+async fn cmd_reboot(cli: &Cli, http_client: &reqwest::Client, json_output: bool) -> Result<()> {
     let targets = resolve_and_probe_targets(cli, http_client).await?;
 
     for device in &targets {
@@ -714,7 +689,10 @@ async fn cmd_rename(
     let targets = resolve_and_probe_targets(cli, http_client).await?;
 
     if targets.len() != 1 {
-        anyhow::bail!("rename requires exactly one target device (got {})", targets.len());
+        anyhow::bail!(
+            "rename requires exactly one target device (got {})",
+            targets.len()
+        );
     }
 
     let device = &targets[0];
@@ -741,21 +719,13 @@ async fn cmd_rename(
     Ok(())
 }
 
-async fn cmd_watch(
-    cli: &Cli,
-    http_client: &reqwest::Client,
-    interval_secs: u64,
-) -> Result<()> {
+async fn cmd_watch(cli: &Cli, http_client: &reqwest::Client, interval_secs: u64) -> Result<()> {
     let devices = resolve_all_or_group(cli)?;
     let interval = Duration::from_secs(interval_secs);
     watch::run(&devices, http_client, interval).await
 }
 
-async fn cmd_health(
-    cli: &Cli,
-    http_client: &reqwest::Client,
-    json_output: bool,
-) -> Result<()> {
+async fn cmd_health(cli: &Cli, http_client: &reqwest::Client, json_output: bool) -> Result<()> {
     let devices = resolve_all_or_group(cli)?;
 
     let handles: Vec<_> = devices

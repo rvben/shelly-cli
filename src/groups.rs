@@ -29,8 +29,8 @@ pub fn load_groups() -> Result<HashMap<String, GroupDef>> {
     }
     let data = std::fs::read_to_string(&path)?;
 
-    let file: GroupsFile = toml::from_str(&data)
-        .with_context(|| format!("failed to parse {}", path.display()))?;
+    let file: GroupsFile =
+        toml::from_str(&data).with_context(|| format!("failed to parse {}", path.display()))?;
     Ok(file.groups)
 }
 
@@ -70,13 +70,11 @@ pub fn resolve_group_with_devices(
             }
             result
         }
-        GroupDef::Filter { filter } => {
-            all_devices
-                .iter()
-                .filter(|d| matches_filter(d, filter))
-                .cloned()
-                .collect()
-        }
+        GroupDef::Filter { filter } => all_devices
+            .iter()
+            .filter(|d| matches_filter(d, filter))
+            .cloned()
+            .collect(),
     }
 }
 
@@ -115,8 +113,7 @@ pub fn add_group(name: &str, device_names: Vec<String>) -> Result<()> {
     groups.insert(name.to_string(), GroupDef::Names(device_names));
 
     let file = GroupsFile { groups };
-    let data = toml::to_string_pretty(&file)
-        .context("failed to serialize groups")?;
+    let data = toml::to_string_pretty(&file).context("failed to serialize groups")?;
     std::fs::write(groups_path()?, data)?;
     Ok(())
 }
@@ -128,8 +125,7 @@ pub fn remove_group(name: &str) -> Result<()> {
     }
 
     let file = GroupsFile { groups };
-    let data = toml::to_string_pretty(&file)
-        .context("failed to serialize groups")?;
+    let data = toml::to_string_pretty(&file).context("failed to serialize groups")?;
     std::fs::write(groups_path()?, data)?;
     Ok(())
 }
@@ -212,12 +208,10 @@ pub fn list_groups(json: bool) -> Result<()> {
     for (name, def) in &groups {
         let count = match def {
             GroupDef::Names(names) => names.len(),
-            GroupDef::Filter { filter } => {
-                all_devices
-                    .iter()
-                    .filter(|d| matches_filter(d, filter))
-                    .count()
-            }
+            GroupDef::Filter { filter } => all_devices
+                .iter()
+                .filter(|d| matches_filter(d, filter))
+                .count(),
         };
 
         let desc = match def {
@@ -255,20 +249,37 @@ mod tests {
 
     fn sample_devices() -> Vec<DeviceInfo> {
         vec![
-            test_device("Kitchen Light", "shellypm-001", DeviceGeneration::Gen1, "SHSW-PM"),
-            test_device("Living Room", "shellyplus1pm-002", DeviceGeneration::Gen2, "SNSW-001P16EU"),
-            test_device("Bedroom Fan", "shelly1minig3-003", DeviceGeneration::Gen3, "S3SW-001X8EU"),
-            test_device("Garage Plug", "shellyplug-004", DeviceGeneration::Gen1, "SHPLG-1"),
+            test_device(
+                "Kitchen Light",
+                "shellypm-001",
+                DeviceGeneration::Gen1,
+                "SHSW-PM",
+            ),
+            test_device(
+                "Living Room",
+                "shellyplus1pm-002",
+                DeviceGeneration::Gen2,
+                "SNSW-001P16EU",
+            ),
+            test_device(
+                "Bedroom Fan",
+                "shelly1minig3-003",
+                DeviceGeneration::Gen3,
+                "S3SW-001X8EU",
+            ),
+            test_device(
+                "Garage Plug",
+                "shellyplug-004",
+                DeviceGeneration::Gen1,
+                "SHPLG-1",
+            ),
         ]
     }
 
     #[test]
     fn names_group_all_found() {
         let devices = sample_devices();
-        let group = GroupDef::Names(vec![
-            "Kitchen Light".to_string(),
-            "Living Room".to_string(),
-        ]);
+        let group = GroupDef::Names(vec!["Kitchen Light".to_string(), "Living Room".to_string()]);
         let result = resolve_group_with_devices(&group, &devices);
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].id, "shellypm-001");
@@ -290,16 +301,24 @@ mod tests {
     #[test]
     fn filter_gen1() {
         let devices = sample_devices();
-        let group = GroupDef::Filter { filter: "gen1".to_string() };
+        let group = GroupDef::Filter {
+            filter: "gen1".to_string(),
+        };
         let result = resolve_group_with_devices(&group, &devices);
         assert_eq!(result.len(), 2);
-        assert!(result.iter().all(|d| d.generation == DeviceGeneration::Gen1));
+        assert!(
+            result
+                .iter()
+                .all(|d| d.generation == DeviceGeneration::Gen1)
+        );
     }
 
     #[test]
     fn filter_gen2() {
         let devices = sample_devices();
-        let group = GroupDef::Filter { filter: "gen2".to_string() };
+        let group = GroupDef::Filter {
+            filter: "gen2".to_string(),
+        };
         let result = resolve_group_with_devices(&group, &devices);
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].generation, DeviceGeneration::Gen2);
@@ -308,7 +327,9 @@ mod tests {
     #[test]
     fn filter_gen3() {
         let devices = sample_devices();
-        let group = GroupDef::Filter { filter: "gen3".to_string() };
+        let group = GroupDef::Filter {
+            filter: "gen3".to_string(),
+        };
         let result = resolve_group_with_devices(&group, &devices);
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].generation, DeviceGeneration::Gen3);
@@ -317,7 +338,9 @@ mod tests {
     #[test]
     fn filter_all() {
         let devices = sample_devices();
-        let group = GroupDef::Filter { filter: "all".to_string() };
+        let group = GroupDef::Filter {
+            filter: "all".to_string(),
+        };
         let result = resolve_group_with_devices(&group, &devices);
         assert_eq!(result.len(), 4);
     }
@@ -325,7 +348,9 @@ mod tests {
     #[test]
     fn filter_by_model_substring() {
         let devices = sample_devices();
-        let group = GroupDef::Filter { filter: "SHSW".to_string() };
+        let group = GroupDef::Filter {
+            filter: "SHSW".to_string(),
+        };
         let result = resolve_group_with_devices(&group, &devices);
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].model, "SHSW-PM");
@@ -334,7 +359,9 @@ mod tests {
     #[test]
     fn filter_by_name_substring() {
         let devices = sample_devices();
-        let group = GroupDef::Filter { filter: "light".to_string() };
+        let group = GroupDef::Filter {
+            filter: "light".to_string(),
+        };
         let result = resolve_group_with_devices(&group, &devices);
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].id, "shellypm-001");
@@ -343,7 +370,9 @@ mod tests {
     #[test]
     fn empty_device_list() {
         let devices: Vec<DeviceInfo> = Vec::new();
-        let group = GroupDef::Filter { filter: "all".to_string() };
+        let group = GroupDef::Filter {
+            filter: "all".to_string(),
+        };
         let result = resolve_group_with_devices(&group, &devices);
         assert!(result.is_empty());
     }
@@ -359,7 +388,9 @@ mod tests {
     #[test]
     fn filter_case_insensitive() {
         let devices = sample_devices();
-        let group = GroupDef::Filter { filter: "GEN1".to_string() };
+        let group = GroupDef::Filter {
+            filter: "GEN1".to_string(),
+        };
         let result = resolve_group_with_devices(&group, &devices);
         assert_eq!(result.len(), 2);
     }

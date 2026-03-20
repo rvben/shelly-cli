@@ -1,5 +1,5 @@
 use clap::CommandFactory;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::cli::Cli;
 
@@ -11,7 +11,15 @@ pub fn generate_schema() -> Value {
     let cmd = Cli::command();
     let version = cmd.get_version().unwrap_or("unknown");
 
-    let mutating_commands = ["on", "off", "toggle", "reboot", "switch on", "switch off", "switch toggle"];
+    let mutating_commands = [
+        "on",
+        "off",
+        "toggle",
+        "reboot",
+        "switch on",
+        "switch off",
+        "switch toggle",
+    ];
 
     let global_args: Vec<Value> = cmd
         .get_arguments()

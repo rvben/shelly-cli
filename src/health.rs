@@ -65,10 +65,7 @@ impl std::fmt::Display for WifiSignal {
     }
 }
 
-pub async fn check_device(
-    info: &DeviceInfo,
-    client: &reqwest::Client,
-) -> HealthReport {
+pub async fn check_device(info: &DeviceInfo, client: &reqwest::Client) -> HealthReport {
     let device = api::create_device(info.clone(), client.clone());
     let mut issues = Vec::new();
 
@@ -86,11 +83,15 @@ pub async fn check_device(
 
     let temp_status = match temperature_c {
         Some(t) if t >= TEMP_CRIT_C => {
-            issues.push(format!("temperature {t:.1}\u{00b0}C exceeds {TEMP_CRIT_C}\u{00b0}C"));
+            issues.push(format!(
+                "temperature {t:.1}\u{00b0}C exceeds {TEMP_CRIT_C}\u{00b0}C"
+            ));
             TempStatus::Hot
         }
         Some(t) if t >= TEMP_WARN_C => {
-            issues.push(format!("temperature {t:.1}\u{00b0}C above {TEMP_WARN_C}\u{00b0}C"));
+            issues.push(format!(
+                "temperature {t:.1}\u{00b0}C above {TEMP_WARN_C}\u{00b0}C"
+            ));
             TempStatus::Warm
         }
         Some(_) => TempStatus::Normal,
@@ -239,7 +240,11 @@ pub fn print_health_report(reports: &[HealthReport]) {
         };
 
         let online_label = if report.online {
-            if color { "online".green().to_string() } else { "online".to_string() }
+            if color {
+                "online".green().to_string()
+            } else {
+                "online".to_string()
+            }
         } else if color {
             "OFFLINE".red().bold().to_string()
         } else {
@@ -249,8 +254,7 @@ pub fn print_health_report(reports: &[HealthReport]) {
         // Use manual padding for fields that contain ANSI codes
         println!(
             " {icon_display}{icon_pad} {device_display:<30} {:<16} temp: {temp_display:<20} wifi: {rssi_display:<22} up: {uptime_str:<12} fw: {}",
-            report.ip,
-            report.firmware,
+            report.ip, report.firmware,
         );
 
         if !report.online {
@@ -284,9 +288,13 @@ pub fn print_health_report(reports: &[HealthReport]) {
         } else {
             format!("{update_count}")
         };
-        println!("Summary: {online_str} online, {issue_str} with issues, {update_str} firmware updates available");
+        println!(
+            "Summary: {online_str} online, {issue_str} with issues, {update_str} firmware updates available"
+        );
     } else {
-        println!("Summary: {online}/{total} online, {issue_count} with issues, {update_count} firmware updates available");
+        println!(
+            "Summary: {online}/{total} online, {issue_count} with issues, {update_count} firmware updates available"
+        );
     }
 
     if let Some((rssi, name)) = weakest_rssi {

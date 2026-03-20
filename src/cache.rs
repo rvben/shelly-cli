@@ -36,15 +36,21 @@ pub fn save_devices(devices: &[DeviceInfo]) -> Result<()> {
 
 pub fn find_device_by_name(devices: &[DeviceInfo], name: &str) -> Option<DeviceInfo> {
     let name_lower = name.to_lowercase();
-    devices.iter().find(|d| {
-        d.display_name().to_lowercase() == name_lower
-            || d.id.to_lowercase() == name_lower
-            || d.display_name().to_lowercase().contains(&name_lower)
-    }).cloned()
+    devices
+        .iter()
+        .find(|d| {
+            d.display_name().to_lowercase() == name_lower
+                || d.id.to_lowercase() == name_lower
+                || d.display_name().to_lowercase().contains(&name_lower)
+        })
+        .cloned()
 }
 
 /// Find a device by name, returning helpful suggestions on failure.
-pub fn find_device_by_name_with_suggestions(devices: &[DeviceInfo], name: &str) -> Result<DeviceInfo> {
+pub fn find_device_by_name_with_suggestions(
+    devices: &[DeviceInfo],
+    name: &str,
+) -> Result<DeviceInfo> {
     if let Some(device) = find_device_by_name(devices, name) {
         return Ok(device);
     }
@@ -55,9 +61,10 @@ pub fn find_device_by_name_with_suggestions(devices: &[DeviceInfo], name: &str) 
         .iter()
         .flat_map(|d| {
             let display = d.display_name();
-            let mut entries = vec![
-                (display, strsim::normalized_damerau_levenshtein(&name_lower, &display.to_lowercase())),
-            ];
+            let mut entries = vec![(
+                display,
+                strsim::normalized_damerau_levenshtein(&name_lower, &display.to_lowercase()),
+            )];
             if d.id != display {
                 entries.push((
                     d.id.as_str(),
@@ -77,7 +84,10 @@ pub fn find_device_by_name_with_suggestions(devices: &[DeviceInfo], name: &str) 
         anyhow::bail!("device '{name}' not found in cache. Run 'shelly discover' first.");
     }
 
-    let suggestions: Vec<String> = candidates.iter().map(|(name, _)| format!("  {name}")).collect();
+    let suggestions: Vec<String> = candidates
+        .iter()
+        .map(|(name, _)| format!("  {name}"))
+        .collect();
     anyhow::bail!(
         "device '{name}' not found. Did you mean:\n{}",
         suggestions.join("\n")
@@ -153,8 +163,14 @@ mod tests {
         let devices = sample_devices();
         let err = find_device_by_name_with_suggestions(&devices, "Kitchn Light").unwrap_err();
         let msg = err.to_string();
-        assert!(msg.contains("Did you mean"), "expected suggestions, got: {msg}");
-        assert!(msg.contains("Kitchen Light"), "expected Kitchen Light in suggestions, got: {msg}");
+        assert!(
+            msg.contains("Did you mean"),
+            "expected suggestions, got: {msg}"
+        );
+        assert!(
+            msg.contains("Kitchen Light"),
+            "expected Kitchen Light in suggestions, got: {msg}"
+        );
     }
 
     #[test]
@@ -162,7 +178,10 @@ mod tests {
         let devices = sample_devices();
         let err = find_device_by_name_with_suggestions(&devices, "xyzzy12345").unwrap_err();
         let msg = err.to_string();
-        assert!(msg.contains("not found in cache"), "expected no-match message, got: {msg}");
+        assert!(
+            msg.contains("not found in cache"),
+            "expected no-match message, got: {msg}"
+        );
     }
 
     #[test]
