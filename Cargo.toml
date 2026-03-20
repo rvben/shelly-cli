@@ -34,6 +34,7 @@ strsim = "0.11"
 crossterm = "0.28"
 chrono = "0.4"
 owo-colors = "4"
+netdev = "0.41"
 
 [profile.release]
 strip = true

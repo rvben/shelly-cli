@@ -52,6 +52,7 @@ struct SelectableRow {
 pub async fn run(
     devices: &[DeviceInfo],
     client: &reqwest::Client,
+    password: Option<String>,
     interval: Duration,
 ) -> Result<()> {
     terminal::enable_raw_mode()?;
@@ -59,12 +60,13 @@ pub async fn run(
     let mut stdout = io::stdout();
     execute!(stdout, terminal::EnterAlternateScreen, cursor::Hide)?;
 
-    watch_loop(devices, client, interval, &mut stdout).await
+    watch_loop(devices, client, &password, interval, &mut stdout).await
 }
 
 async fn watch_loop(
     devices: &[DeviceInfo],
     client: &reqwest::Client,
+    password: &Option<String>,
     interval: Duration,
     stdout: &mut io::Stdout,
 ) -> Result<()> {
@@ -72,7 +74,7 @@ async fn watch_loop(
     let mut status_msg: Option<(String, tokio::time::Instant)> = None;
 
     loop {
-        let snapshots = poll_all(devices, client).await;
+        let snapshots = poll_all(devices, client, password).await;
         let rows = build_selectable_rows(&snapshots);
 
         // Clamp selection
@@ -143,7 +145,11 @@ async fn watch_loop(
                                 ));
                             } else {
                                 let info = &devices[row.device_index];
-                                let device = api::create_device(info.clone(), client.clone());
+                                let device = api::create_device(
+                                    info.clone(),
+                                    client.clone(),
+                                    password.clone(),
+                                );
                                 let switch_id = row.switch_id;
                                 match device.switch_toggle(switch_id).await {
                                     Ok(result) => {
@@ -215,13 +221,17 @@ fn build_selectable_rows(snapshots: &[DeviceSnapshot]) -> Vec<SelectableRow> {
     rows
 }
 
-async fn poll_all(devices: &[DeviceInfo], client: &reqwest::Client) -> Vec<DeviceSnapshot> {
+async fn poll_all(
+    devices: &[DeviceInfo],
+    client: &reqwest::Client,
+    password: &Option<String>,
+) -> Vec<DeviceSnapshot> {
     let mut snapshots = Vec::with_capacity(devices.len());
 
     let handles: Vec<_> = devices
         .iter()
         .map(|info| {
-            let device = api::create_device(info.clone(), client.clone());
+            let device = api::create_device(info.clone(), client.clone(), password.clone());
             let name = info.display_name().to_string();
 
             tokio::spawn(async move {

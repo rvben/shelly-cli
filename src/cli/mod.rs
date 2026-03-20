@@ -36,6 +36,10 @@ pub struct Cli {
     #[arg(long, short = 'q', global = true)]
     pub quiet: bool,
 
+    /// Device password for authentication
+    #[arg(long, short = 'p', global = true)]
+    pub password: Option<String>,
+
     /// HTTP timeout in milliseconds
     #[arg(long, global = true, default_value = "3000")]
     pub timeout: u64,

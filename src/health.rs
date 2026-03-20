@@ -65,8 +65,12 @@ impl std::fmt::Display for WifiSignal {
     }
 }
 
-pub async fn check_device(info: &DeviceInfo, client: &reqwest::Client) -> HealthReport {
-    let device = api::create_device(info.clone(), client.clone());
+pub async fn check_device(
+    info: &DeviceInfo,
+    client: &reqwest::Client,
+    password: &Option<String>,
+) -> HealthReport {
+    let device = api::create_device(info.clone(), client.clone(), password.clone());
     let mut issues = Vec::new();
 
     let (online, temperature_c, wifi_rssi, uptime) = match device.status().await {

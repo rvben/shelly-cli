@@ -7,11 +7,16 @@ use super::{FirmwareInfo, SwitchResult};
 pub struct Gen2Device {
     info: DeviceInfo,
     client: reqwest::Client,
+    password: Option<String>,
 }
 
 impl Gen2Device {
-    pub fn new(info: DeviceInfo, client: reqwest::Client) -> Self {
-        Self { info, client }
+    pub fn new(info: DeviceInfo, client: reqwest::Client, password: Option<String>) -> Self {
+        Self {
+            info,
+            client,
+            password,
+        }
     }
 
     fn rpc_url(&self, method: &str) -> String {
@@ -26,9 +31,17 @@ impl Gen2Device {
         let url = self.rpc_url(method);
 
         let resp = if let Some(params) = params {
-            self.client.post(&url).json(&params).send().await
+            let mut req = self.client.post(&url).json(&params);
+            if let Some(ref password) = self.password {
+                req = req.basic_auth("admin", Some(password));
+            }
+            req.send().await
         } else {
-            self.client.get(&url).send().await
+            let mut req = self.client.get(&url);
+            if let Some(ref password) = self.password {
+                req = req.basic_auth("admin", Some(password));
+            }
+            req.send().await
         };
 
         let resp = resp.with_context(|| format!("failed to reach {url}"))?;

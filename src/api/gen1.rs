@@ -7,11 +7,16 @@ use super::{FirmwareInfo, SwitchResult};
 pub struct Gen1Device {
     info: DeviceInfo,
     client: reqwest::Client,
+    password: Option<String>,
 }
 
 impl Gen1Device {
-    pub fn new(info: DeviceInfo, client: reqwest::Client) -> Self {
-        Self { info, client }
+    pub fn new(info: DeviceInfo, client: reqwest::Client, password: Option<String>) -> Self {
+        Self {
+            info,
+            client,
+            password,
+        }
     }
 
     fn url(&self, path: &str) -> String {
@@ -20,9 +25,11 @@ impl Gen1Device {
 
     async fn get_json(&self, path: &str) -> Result<serde_json::Value> {
         let url = self.url(path);
-        let resp = self
-            .client
-            .get(&url)
+        let mut req = self.client.get(&url);
+        if let Some(ref password) = self.password {
+            req = req.basic_auth("admin", Some(password));
+        }
+        let resp = req
             .send()
             .await
             .with_context(|| format!("failed to reach {url}"))?;
@@ -157,10 +164,11 @@ impl Gen1Device {
 
     pub async fn set_name(&self, name: &str) -> Result<()> {
         let url = self.url("/settings");
-        let resp = self
-            .client
-            .get(&url)
-            .query(&[("name", name)])
+        let mut req = self.client.get(&url).query(&[("name", name)]);
+        if let Some(ref password) = self.password {
+            req = req.basic_auth("admin", Some(password));
+        }
+        let resp = req
             .send()
             .await
             .with_context(|| format!("failed to reach {url}"))?;

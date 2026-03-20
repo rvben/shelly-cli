@@ -1,1 +1,17 @@
-/target
+# Rust
+/target/
+
+# Python
+**/__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+*.whl
+
+# Planning
+PLAN.md
+
+# macOS
+.DS_Store

@@ -105,13 +105,17 @@ impl ShellyDevice {
     }
 }
 
-pub fn create_device(info: DeviceInfo, client: reqwest::Client) -> ShellyDevice {
+pub fn create_device(
+    info: DeviceInfo,
+    client: reqwest::Client,
+    password: Option<String>,
+) -> ShellyDevice {
     match info.generation {
         crate::model::DeviceGeneration::Gen1 => {
-            ShellyDevice::Gen1(gen1::Gen1Device::new(info, client))
+            ShellyDevice::Gen1(gen1::Gen1Device::new(info, client, password))
         }
         crate::model::DeviceGeneration::Gen2 | crate::model::DeviceGeneration::Gen3 => {
-            ShellyDevice::Gen2(gen2::Gen2Device::new(info, client))
+            ShellyDevice::Gen2(gen2::Gen2Device::new(info, client, password))
         }
     }
 }
@@ -120,6 +124,35 @@ pub async fn probe_device(ip: IpAddr, client: &reqwest::Client) -> Result<Device
     let url = format!("http://{ip}/shelly");
     let resp = client.get(&url).send().await?;
     let shelly: serde_json::Value = resp.json().await?;
-    DeviceInfo::from_shelly_response(ip, &shelly)
-        .ok_or_else(|| anyhow::anyhow!("unrecognized Shelly response from {ip}"))
+    let mut info = DeviceInfo::from_shelly_response(ip, &shelly)
+        .ok_or_else(|| anyhow::anyhow!("unrecognized Shelly response from {ip}"))?;
+
+    // Gen2/Gen3 devices don't report num_outputs in /shelly, so count switch
+    // components from the full status response.
+    if matches!(
+        info.generation,
+        crate::model::DeviceGeneration::Gen2 | crate::model::DeviceGeneration::Gen3
+    ) && let Ok((num_outputs, num_meters)) = count_gen2_outputs(ip, client).await
+    {
+        info.num_outputs = num_outputs;
+        info.num_meters = num_meters;
+    }
+
+    Ok(info)
+}
+
+/// Count switch components from a Gen2/Gen3 `Shelly.GetStatus` response.
+async fn count_gen2_outputs(ip: IpAddr, client: &reqwest::Client) -> Result<(u8, u8)> {
+    let url = format!("http://{ip}/rpc/Shelly.GetStatus");
+    let resp = client.get(&url).send().await?;
+    let status: serde_json::Value = resp.json().await?;
+
+    let obj = status
+        .as_object()
+        .ok_or_else(|| anyhow::anyhow!("expected JSON object"))?;
+
+    let num_switches = obj.keys().filter(|k| k.starts_with("switch:")).count() as u8;
+
+    // Gen2 power metering is embedded in each switch component
+    Ok((num_switches.max(1), num_switches.max(1)))
 }

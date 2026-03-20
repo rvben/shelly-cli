@@ -11,7 +11,7 @@ mod schema;
 mod watch;
 
 use std::io::IsTerminal;
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv4Addr};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -46,6 +46,9 @@ async fn run() -> Result<()> {
     let json_output = cli.json || !std::io::stdout().is_terminal();
     let timeout = Duration::from_millis(cli.timeout);
 
+    let app_config = config::load_config()?;
+    let password = cli.password.clone().or(app_config.auth.password);
+
     let http_client = reqwest::Client::builder().timeout(timeout).build()?;
 
     // Convert top-level On/Off/Toggle: extract positional device name and delegate to cmd_switch
@@ -59,27 +62,33 @@ async fn run() -> Result<()> {
         if let Some(dev) = device {
             cli.name = cli.name.or(Some(dev));
         }
-        return cmd_switch(&cli, &http_client, action, json_output).await;
+        return cmd_switch(&cli, &http_client, &password, action, json_output).await;
     }
 
     match cli.command {
         Command::Discover { subnet } => cmd_discover(subnet, timeout, json_output, cli.quiet).await,
         Command::Devices { refresh } => cmd_devices(refresh, timeout, json_output, cli.quiet).await,
-        Command::Status { all } => cmd_status(&cli, &http_client, all, json_output).await,
+        Command::Status { all } => {
+            cmd_status(&cli, &http_client, &password, all, json_output).await
+        }
         Command::Switch { ref action } => {
-            cmd_switch(&cli, &http_client, action.clone(), json_output).await
+            cmd_switch(&cli, &http_client, &password, action.clone(), json_output).await
         }
-        Command::Power { all, id } => cmd_power(&cli, &http_client, all, id, json_output).await,
+        Command::Power { all, id } => {
+            cmd_power(&cli, &http_client, &password, all, id, json_output).await
+        }
         Command::Firmware { ref action } => {
-            cmd_firmware(&cli, &http_client, action.clone(), json_output).await
+            cmd_firmware(&cli, &http_client, &password, action.clone(), json_output).await
         }
-        Command::Config { ref action } => cmd_config(&cli, &http_client, action.clone()).await,
+        Command::Config { ref action } => {
+            cmd_config(&cli, &http_client, &password, action.clone()).await
+        }
         Command::Rename { ref new_name } => {
-            cmd_rename(&cli, &http_client, new_name, json_output).await
+            cmd_rename(&cli, &http_client, &password, new_name, json_output).await
         }
-        Command::Reboot => cmd_reboot(&cli, &http_client, json_output).await,
-        Command::Watch { interval } => cmd_watch(&cli, &http_client, interval).await,
-        Command::Health => cmd_health(&cli, &http_client, json_output).await,
+        Command::Reboot => cmd_reboot(&cli, &http_client, &password, json_output).await,
+        Command::Watch { interval } => cmd_watch(&cli, &http_client, &password, interval).await,
+        Command::Health => cmd_health(&cli, &http_client, &password, json_output).await,
         Command::Group { ref action } => cmd_group(action.clone(), json_output),
         Command::Schema => {
             let schema = schema::generate_schema();
@@ -142,6 +151,7 @@ fn resolve_targets(cli: &Cli) -> Result<Vec<DeviceInfo>> {
 async fn resolve_and_probe_targets(
     cli: &Cli,
     http_client: &reqwest::Client,
+    password: &Option<String>,
 ) -> Result<Vec<api::ShellyDevice>> {
     let infos = resolve_targets(cli)?;
     let mut devices = Vec::with_capacity(infos.len());
@@ -152,10 +162,27 @@ async fn resolve_and_probe_targets(
         } else {
             info
         };
-        devices.push(api::create_device(info, http_client.clone()));
+        warn_if_auth_required(&info, password);
+        devices.push(api::create_device(
+            info,
+            http_client.clone(),
+            password.clone(),
+        ));
     }
 
     Ok(devices)
+}
+
+/// Print a warning when a device requires authentication but no password was provided.
+fn warn_if_auth_required(info: &DeviceInfo, password: &Option<String>) {
+    if info.auth_enabled && password.is_none() {
+        eprintln!(
+            "Warning: {} ({}) has authentication enabled but no password provided. \
+             Use --password or set [auth] password in config.toml.",
+            info.display_name(),
+            info.ip,
+        );
+    }
 }
 
 /// Load all cached devices, or resolve --group if specified.
@@ -193,14 +220,45 @@ fn colored_on_off(on: bool, color: bool) -> String {
     }
 }
 
+/// Auto-detect the local IPv4 subnet from the default network interface.
+///
+/// Uses the default interface's IPv4 address and prefix length to compute
+/// the network address in CIDR notation (e.g. "192.168.1.0/24").
+fn detect_subnet() -> Option<String> {
+    let iface = netdev::get_default_interface().ok()?;
+    let addr_info = iface.ipv4.first()?;
+    let ip = addr_info.addr();
+    let prefix_len = addr_info.prefix_len();
+
+    // Compute the network address by masking the host bits
+    let mask = if prefix_len >= 32 {
+        u32::MAX
+    } else {
+        u32::MAX << (32 - prefix_len)
+    };
+    let network_bits = u32::from(ip) & mask;
+    let network_addr = Ipv4Addr::from(network_bits);
+
+    Some(format!("{network_addr}/{prefix_len}"))
+}
+
 async fn cmd_discover(
     subnet_arg: Option<String>,
     timeout: Duration,
     json_output: bool,
     quiet: bool,
 ) -> Result<()> {
-    let app_config = config::load_config()?;
-    let subnet_str = subnet_arg.as_deref().unwrap_or(&app_config.network.subnet);
+    let subnet_str = if let Some(ref s) = subnet_arg {
+        s.clone()
+    } else if let Some(detected) = detect_subnet() {
+        if !quiet {
+            eprintln!("Auto-detected subnet: {detected}");
+        }
+        detected
+    } else {
+        let app_config = config::load_config()?;
+        app_config.network.subnet.clone()
+    };
 
     let subnet: ipnet::Ipv4Net = subnet_str
         .parse()
@@ -276,6 +334,7 @@ async fn cmd_devices(
 async fn cmd_status(
     cli: &Cli,
     http_client: &reqwest::Client,
+    password: &Option<String>,
     all: bool,
     json_output: bool,
 ) -> Result<()> {
@@ -284,7 +343,8 @@ async fn cmd_status(
 
         let mut results = Vec::new();
         for info in &devices {
-            let device = api::create_device(info.clone(), http_client.clone());
+            warn_if_auth_required(info, password);
+            let device = api::create_device(info.clone(), http_client.clone(), password.clone());
             match device.status().await {
                 Ok(status) => {
                     if json_output {
@@ -316,7 +376,7 @@ async fn cmd_status(
             output::print_json_success(&results);
         }
     } else {
-        let targets = resolve_and_probe_targets(cli, http_client).await?;
+        let targets = resolve_and_probe_targets(cli, http_client, password).await?;
         let device = &targets[0];
         let status = device.status().await?;
 
@@ -333,15 +393,23 @@ async fn cmd_status(
 async fn cmd_switch(
     cli: &Cli,
     http_client: &reqwest::Client,
+    password: &Option<String>,
     action: SwitchAction,
     json_output: bool,
 ) -> Result<()> {
-    let targets = resolve_and_probe_targets(cli, http_client).await?;
+    let targets = resolve_and_probe_targets(cli, http_client, password).await?;
 
     let mut json_results: Vec<serde_json::Value> = Vec::new();
 
     for device in &targets {
         let name = device.info().display_name().to_string();
+        let switch_id = match action {
+            SwitchAction::Status { id }
+            | SwitchAction::On { id }
+            | SwitchAction::Off { id }
+            | SwitchAction::Toggle { id } => id,
+        };
+        validate_switch_id(device.info(), switch_id)?;
 
         match action {
             SwitchAction::Status { id } => {
@@ -408,6 +476,7 @@ async fn cmd_switch(
 async fn cmd_power(
     cli: &Cli,
     http_client: &reqwest::Client,
+    password: &Option<String>,
     all: bool,
     id: u8,
     json_output: bool,
@@ -431,28 +500,38 @@ async fn cmd_power(
 
         let mut results = Vec::new();
         for info in &devices {
-            let device = api::create_device(info.clone(), http_client.clone());
-            match device.power(0).await {
-                Ok(reading) => {
-                    if json_output {
-                        results.push(serde_json::json!({
-                            "device": info.display_name(),
-                            "ip": info.ip.to_string(),
-                            "power": reading,
-                        }));
-                    } else {
-                        output::print_power_reading(info.display_name(), &reading);
+            warn_if_auth_required(info, password);
+            let device = api::create_device(info.clone(), http_client.clone(), password.clone());
+            for meter_id in 0..info.num_meters {
+                let label = if info.num_meters > 1 {
+                    format!("{} [{}]", info.display_name(), meter_id)
+                } else {
+                    info.display_name().to_string()
+                };
+                match device.power(meter_id).await {
+                    Ok(reading) => {
+                        if json_output {
+                            results.push(serde_json::json!({
+                                "device": info.display_name(),
+                                "ip": info.ip.to_string(),
+                                "meter_id": meter_id,
+                                "power": reading,
+                            }));
+                        } else {
+                            output::print_power_reading(&label, &reading);
+                        }
                     }
-                }
-                Err(e) => {
-                    if json_output {
-                        results.push(serde_json::json!({
-                            "device": info.display_name(),
-                            "ip": info.ip.to_string(),
-                            "error": e.to_string(),
-                        }));
-                    } else {
-                        eprintln!("{:<30} error: {e}", info.display_name());
+                    Err(e) => {
+                        if json_output {
+                            results.push(serde_json::json!({
+                                "device": info.display_name(),
+                                "ip": info.ip.to_string(),
+                                "meter_id": meter_id,
+                                "error": e.to_string(),
+                            }));
+                        } else {
+                            eprintln!("{:<30} error: {e}", label);
+                        }
                     }
                 }
             }
@@ -462,8 +541,9 @@ async fn cmd_power(
             output::print_json_success(&results);
         }
     } else {
-        let targets = resolve_and_probe_targets(cli, http_client).await?;
+        let targets = resolve_and_probe_targets(cli, http_client, password).await?;
         let device = &targets[0];
+        validate_meter_id(device.info(), id)?;
         let reading = device.power(id).await?;
 
         if json_output {
@@ -476,9 +556,38 @@ async fn cmd_power(
     Ok(())
 }
 
+/// Validate that a switch ID is within the device's output range.
+fn validate_switch_id(info: &DeviceInfo, id: u8) -> Result<()> {
+    if id >= info.num_outputs {
+        anyhow::bail!(
+            "switch ID {id} is out of range for {} (has {num} output{s}; valid IDs: 0..{max})",
+            info.display_name(),
+            num = info.num_outputs,
+            s = if info.num_outputs == 1 { "" } else { "s" },
+            max = info.num_outputs - 1,
+        );
+    }
+    Ok(())
+}
+
+/// Validate that a meter ID is within the device's meter range.
+fn validate_meter_id(info: &DeviceInfo, id: u8) -> Result<()> {
+    if id >= info.num_meters {
+        anyhow::bail!(
+            "meter ID {id} is out of range for {} (has {num} meter{s}; valid IDs: 0..{max})",
+            info.display_name(),
+            num = info.num_meters,
+            s = if info.num_meters == 1 { "" } else { "s" },
+            max = info.num_meters - 1,
+        );
+    }
+    Ok(())
+}
+
 async fn cmd_firmware(
     cli: &Cli,
     http_client: &reqwest::Client,
+    password: &Option<String>,
     action: FirmwareAction,
     json_output: bool,
 ) -> Result<()> {
@@ -503,7 +612,9 @@ async fn cmd_firmware(
 
                 let mut results = Vec::new();
                 for info in &devices {
-                    let device = api::create_device(info.clone(), http_client.clone());
+                    warn_if_auth_required(info, password);
+                    let device =
+                        api::create_device(info.clone(), http_client.clone(), password.clone());
                     match device.firmware_check().await {
                         Ok(fw) => {
                             if json_output {
@@ -544,7 +655,7 @@ async fn cmd_firmware(
                     output::print_json_success(&results);
                 }
             } else {
-                let targets = resolve_and_probe_targets(cli, http_client).await?;
+                let targets = resolve_and_probe_targets(cli, http_client, password).await?;
                 let device = &targets[0];
                 let fw = device.firmware_check().await?;
 
@@ -576,7 +687,9 @@ async fn cmd_firmware(
 
             let mut results = Vec::new();
             for info in &infos {
-                let device = api::create_device(info.clone(), http_client.clone());
+                warn_if_auth_required(info, password);
+                let device =
+                    api::create_device(info.clone(), http_client.clone(), password.clone());
                 let name = info.display_name();
 
                 match device.firmware_check().await {
@@ -648,10 +761,15 @@ async fn cmd_firmware(
     Ok(())
 }
 
-async fn cmd_config(cli: &Cli, http_client: &reqwest::Client, action: ConfigAction) -> Result<()> {
+async fn cmd_config(
+    cli: &Cli,
+    http_client: &reqwest::Client,
+    password: &Option<String>,
+    action: ConfigAction,
+) -> Result<()> {
     match action {
         ConfigAction::Get => {
-            let targets = resolve_and_probe_targets(cli, http_client).await?;
+            let targets = resolve_and_probe_targets(cli, http_client, password).await?;
             let device = &targets[0];
             let config = device.config_get().await?;
             output::print_json_success(&config);
@@ -661,8 +779,13 @@ async fn cmd_config(cli: &Cli, http_client: &reqwest::Client, action: ConfigActi
     Ok(())
 }
 
-async fn cmd_reboot(cli: &Cli, http_client: &reqwest::Client, json_output: bool) -> Result<()> {
-    let targets = resolve_and_probe_targets(cli, http_client).await?;
+async fn cmd_reboot(
+    cli: &Cli,
+    http_client: &reqwest::Client,
+    password: &Option<String>,
+    json_output: bool,
+) -> Result<()> {
+    let targets = resolve_and_probe_targets(cli, http_client, password).await?;
 
     for device in &targets {
         device.reboot().await?;
@@ -683,10 +806,11 @@ async fn cmd_reboot(cli: &Cli, http_client: &reqwest::Client, json_output: bool)
 async fn cmd_rename(
     cli: &Cli,
     http_client: &reqwest::Client,
+    password: &Option<String>,
     new_name: &str,
     json_output: bool,
 ) -> Result<()> {
-    let targets = resolve_and_probe_targets(cli, http_client).await?;
+    let targets = resolve_and_probe_targets(cli, http_client, password).await?;
 
     if targets.len() != 1 {
         anyhow::bail!(
@@ -719,13 +843,23 @@ async fn cmd_rename(
     Ok(())
 }
 
-async fn cmd_watch(cli: &Cli, http_client: &reqwest::Client, interval_secs: u64) -> Result<()> {
+async fn cmd_watch(
+    cli: &Cli,
+    http_client: &reqwest::Client,
+    password: &Option<String>,
+    interval_secs: u64,
+) -> Result<()> {
     let devices = resolve_all_or_group(cli)?;
     let interval = Duration::from_secs(interval_secs);
-    watch::run(&devices, http_client, interval).await
+    watch::run(&devices, http_client, password.clone(), interval).await
 }
 
-async fn cmd_health(cli: &Cli, http_client: &reqwest::Client, json_output: bool) -> Result<()> {
+async fn cmd_health(
+    cli: &Cli,
+    http_client: &reqwest::Client,
+    password: &Option<String>,
+    json_output: bool,
+) -> Result<()> {
     let devices = resolve_all_or_group(cli)?;
 
     let handles: Vec<_> = devices
@@ -733,7 +867,8 @@ async fn cmd_health(cli: &Cli, http_client: &reqwest::Client, json_output: bool)
         .map(|info| {
             let info = info.clone();
             let client = http_client.clone();
-            tokio::spawn(async move { health::check_device(&info, &client).await })
+            let password = password.clone();
+            tokio::spawn(async move { health::check_device(&info, &client, &password).await })
         })
         .collect();
 
