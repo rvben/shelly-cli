@@ -4,6 +4,12 @@ version = "0.1.0"
 edition = "2024"
 description = "CLI for managing and controlling Shelly devices"
 license = "MIT"
+repository = "https://github.com/rvben/shelly-cli"
+homepage = "https://github.com/rvben/shelly-cli"
+keywords = ["shelly", "home-automation", "iot", "smart-home", "cli"]
+categories = ["command-line-utilities", "network-programming"]
+readme = "README.md"
+authors = ["Ruben Jongejan <ruben.jongejan@gmail.com>"]
 
 [[bin]]
 name = "shelly"
