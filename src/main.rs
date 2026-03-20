@@ -262,20 +262,19 @@ fn detect_subnet() -> Option<String> {
                 && !name.starts_with("veth")
         })
         .flat_map(|iface| &iface.ipv4)
-        .filter(|addr_info| {
+        .find(|addr_info| {
             let ip = addr_info.addr();
             let prefix = addr_info.prefix_len();
             // Private ranges with reasonable subnet sizes
-            ip.is_private() && prefix >= 8 && prefix <= 30
-        })
-        .next();
+            ip.is_private() && (8..=30).contains(&prefix)
+        });
 
     // Fall back to default interface
     let addr_info = if let Some(addr) = candidate {
-        addr.clone()
+        *addr
     } else {
         let iface = netdev::get_default_interface().ok()?;
-        iface.ipv4.first()?.clone()
+        *iface.ipv4.first()?
     };
 
     let ip = addr_info.addr();
