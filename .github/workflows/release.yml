@@ -25,26 +25,19 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
-            use_cross: true
-            maturin_compat: manylinux_2_28
-            maturin_zig: true
+            maturin_args: --compatibility manylinux_2_28 --zig
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
-            use_cross: true
-            maturin_compat: manylinux_2_28
-            maturin_zig: true
+            maturin_args: --compatibility manylinux_2_28 --zig
           - target: x86_64-apple-darwin
             os: macos-latest
-            use_cross: false
-            maturin_zig: false
+            maturin_args: ""
           - target: aarch64-apple-darwin
             os: macos-latest
-            use_cross: false
-            maturin_zig: false
+            maturin_args: ""
           - target: x86_64-pc-windows-msvc
             os: windows-latest
-            use_cross: false
-            maturin_zig: false
+            maturin_args: ""
     runs-on: ${{ matrix.os }}
     permissions:
       contents: write
@@ -59,33 +52,11 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install maturin
-        run: pip install maturin
+      - name: Install maturin and zig
+        run: pip install maturin ziglang
 
-      - name: Install zig
-        if: matrix.maturin_zig
-        run: pip install ziglang
-
-      - name: Install cross
-        if: matrix.use_cross
-        run: cargo install cross --git https://github.com/cross-rs/cross
-
-      - name: Build binary
-        run: |
-          if [ "${{ matrix.use_cross }}" = "true" ]; then
-            cross build --release --target ${{ matrix.target }}
-          else
-            cargo build --release --target ${{ matrix.target }}
-          fi
-        shell: bash
-
-      - name: Build wheel
-        run: |
-          if [ "${{ matrix.maturin_zig }}" = "true" ]; then
-            maturin build --release --target ${{ matrix.target }} --compatibility ${{ matrix.maturin_compat }} --zig
-          else
-            maturin build --release --target ${{ matrix.target }}
-          fi
+      - name: Build wheel and binary
+        run: maturin build --release --target ${{ matrix.target }} ${{ matrix.maturin_args }}
         shell: bash
 
       - name: Package binary (unix)
