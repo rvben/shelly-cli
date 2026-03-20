@@ -1,4 +1,4 @@
-.PHONY: build release install lint test clean
+.PHONY: build release test lint fmt fmt-check clean install
 
 build:
 	cargo build
@@ -6,14 +6,20 @@ build:
 release:
 	cargo build --release
 
-install: release
-	cp target/release/shelly-cli ~/.local/bin/shelly-cli
+test:
+	cargo test
 
 lint:
 	cargo clippy -- -D warnings
 
-test:
-	cargo test
+fmt:
+	cargo fmt
+
+fmt-check:
+	cargo fmt --check
 
 clean:
 	cargo clean
+
+install:
+	cargo install --path .
