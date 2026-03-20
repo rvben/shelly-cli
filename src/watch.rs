@@ -40,6 +40,14 @@ struct SwitchSnapshot {
     total_energy_wh: Option<f64>,
 }
 
+/// A selectable row in the watch table, mapping to a device + switch.
+struct SelectableRow {
+    device_index: usize,
+    switch_id: u8,
+    is_online: bool,
+    has_switch: bool,
+}
+
 pub async fn run(
     devices: &[DeviceInfo],
     client: &reqwest::Client,
@@ -59,9 +67,20 @@ async fn watch_loop(
     interval: Duration,
     stdout: &mut io::Stdout,
 ) -> Result<()> {
+    let mut selected: usize = 0;
+    let mut status_msg: Option<(String, tokio::time::Instant)> = None;
+
     loop {
         let snapshots = poll_all(devices, client).await;
-        render(stdout, &snapshots)?;
+        let rows = build_selectable_rows(&snapshots);
+
+        // Clamp selection
+        let row_count = rows.len();
+        if row_count > 0 && selected >= row_count {
+            selected = row_count - 1;
+        }
+
+        render(stdout, &snapshots, selected, &status_msg)?;
 
         // Wait for interval or keypress
         let deadline = tokio::time::Instant::now() + interval;
@@ -71,7 +90,14 @@ async fn watch_loop(
                 break;
             }
 
-            // Poll for keyboard events with a short timeout
+            // Clear expired status messages
+            if let Some((_, expires)) = &status_msg
+                && tokio::time::Instant::now() >= *expires
+            {
+                status_msg = None;
+                render(stdout, &snapshots, selected, &status_msg)?;
+            }
+
             if event::poll(remaining.min(Duration::from_millis(100)))?
                 && let Event::Key(key) = event::read()?
             {
@@ -80,6 +106,76 @@ async fn watch_loop(
                     KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                         return Ok(());
                     }
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        if selected > 0 {
+                            selected -= 1;
+                            render(stdout, &snapshots, selected, &status_msg)?;
+                        }
+                    }
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        if row_count > 0 && selected < row_count - 1 {
+                            selected += 1;
+                            render(stdout, &snapshots, selected, &status_msg)?;
+                        }
+                    }
+                    KeyCode::Home => {
+                        selected = 0;
+                        render(stdout, &snapshots, selected, &status_msg)?;
+                    }
+                    KeyCode::End => {
+                        if row_count > 0 {
+                            selected = row_count - 1;
+                        }
+                        render(stdout, &snapshots, selected, &status_msg)?;
+                    }
+                    KeyCode::Enter | KeyCode::Char(' ') => {
+                        if let Some(row) = rows.get(selected) {
+                            if !row.is_online {
+                                status_msg = Some((
+                                    "device is offline".to_string(),
+                                    tokio::time::Instant::now() + Duration::from_secs(3),
+                                ));
+                            } else if !row.has_switch {
+                                status_msg = Some((
+                                    "device has no switch".to_string(),
+                                    tokio::time::Instant::now() + Duration::from_secs(3),
+                                ));
+                            } else {
+                                let info = &devices[row.device_index];
+                                let device = api::create_device(info.clone(), client.clone());
+                                let switch_id = row.switch_id;
+                                match device.switch_toggle(switch_id).await {
+                                    Ok(result) => {
+                                        let new_state = if result.was_on { "OFF" } else { "ON" };
+                                        status_msg = Some((
+                                            format!(
+                                                "toggled {} → {}",
+                                                info.display_name(),
+                                                new_state
+                                            ),
+                                            tokio::time::Instant::now() + Duration::from_secs(3),
+                                        ));
+                                    }
+                                    Err(e) => {
+                                        status_msg = Some((
+                                            format!("toggle failed: {e}"),
+                                            tokio::time::Instant::now() + Duration::from_secs(5),
+                                        ));
+                                    }
+                                }
+                                // Break to refresh immediately after toggle
+                                break;
+                            }
+                            render(stdout, &snapshots, selected, &status_msg)?;
+                        }
+                    }
+                    KeyCode::Char(c @ '1'..='9') => {
+                        let idx = (c as usize) - ('1' as usize);
+                        if idx < row_count {
+                            selected = idx;
+                            render(stdout, &snapshots, selected, &status_msg)?;
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -87,10 +183,40 @@ async fn watch_loop(
     }
 }
 
+fn build_selectable_rows(snapshots: &[DeviceSnapshot]) -> Vec<SelectableRow> {
+    let mut rows = Vec::new();
+    for (device_index, snap) in snapshots.iter().enumerate() {
+        if !snap.online {
+            rows.push(SelectableRow {
+                device_index,
+                switch_id: 0,
+                is_online: false,
+                has_switch: false,
+            });
+        } else if snap.switches.is_empty() {
+            rows.push(SelectableRow {
+                device_index,
+                switch_id: 0,
+                is_online: true,
+                has_switch: false,
+            });
+        } else {
+            for sw in &snap.switches {
+                rows.push(SelectableRow {
+                    device_index,
+                    switch_id: sw.id,
+                    is_online: true,
+                    has_switch: true,
+                });
+            }
+        }
+    }
+    rows
+}
+
 async fn poll_all(devices: &[DeviceInfo], client: &reqwest::Client) -> Vec<DeviceSnapshot> {
     let mut snapshots = Vec::with_capacity(devices.len());
 
-    // Poll devices concurrently
     let handles: Vec<_> = devices
         .iter()
         .map(|info| {
@@ -139,8 +265,12 @@ async fn poll_all(devices: &[DeviceInfo], client: &reqwest::Client) -> Vec<Devic
     snapshots
 }
 
-fn render(stdout: &mut io::Stdout, snapshots: &[DeviceSnapshot]) -> Result<()> {
-    // Watch mode always runs in a TTY (alternate screen), so color is always on
+fn render(
+    stdout: &mut io::Stdout,
+    snapshots: &[DeviceSnapshot],
+    selected: usize,
+    status_msg: &Option<(String, tokio::time::Instant)>,
+) -> Result<()> {
     execute!(
         stdout,
         cursor::MoveTo(0, 0),
@@ -150,30 +280,44 @@ fn render(stdout: &mut io::Stdout, snapshots: &[DeviceSnapshot]) -> Result<()> {
     let now = chrono::Local::now().format("%H:%M:%S");
     writeln!(
         stdout,
-        " {}  |  {now}  |  press {} to quit\r",
+        " {}  |  {now}  |  {} select  {} toggle  {} quit\r",
         "shelly watch".bold(),
-        "q".bold()
+        "↑↓".bold(),
+        "⏎".bold(),
+        "q".bold(),
     )?;
-    writeln!(stdout, "\r")?;
+
+    // Show status message if active
+    if let Some((msg, _)) = status_msg {
+        writeln!(stdout, " {}\r", msg.yellow())?;
+    } else {
+        writeln!(stdout, "\r")?;
+    }
 
     let header = format!(
-        " {:<30} {:<5} {:>8} {:>8} {:>7} {:>10} {:>6} Uptime",
+        "   {:<30} {:<5} {:>8} {:>8} {:>7} {:>10} {:>6} Uptime",
         "Device", "State", "Power", "Voltage", "Temp", "Energy", "RSSI"
     );
     writeln!(stdout, "{}\r", header.bold())?;
 
-    writeln!(stdout, " {}\r", "-".repeat(95).dimmed())?;
+    writeln!(stdout, "   {}\r", "-".repeat(93).dimmed())?;
 
     let mut total_power = 0.0;
     let mut on_count = 0u32;
     let mut total_count = 0u32;
     let mut online_count = 0u32;
+    let mut row_idx = 0usize;
 
     for snap in snapshots {
         if !snap.online {
-            writeln!(
-                stdout,
-                " {:<30} {:<5} {:>8} {:>8} {:>7} {:>10} {:>6} -\r",
+            let indicator = if row_idx == selected {
+                ">".bold().cyan().to_string()
+            } else {
+                " ".to_string()
+            };
+            let line = format!(
+                " {} {:<30} {:<5} {:>8} {:>8} {:>7} {:>10} {:>6} -",
+                indicator,
                 snap.name.red(),
                 "OFFLINE".red().bold(),
                 "-".dimmed(),
@@ -181,17 +325,28 @@ fn render(stdout: &mut io::Stdout, snapshots: &[DeviceSnapshot]) -> Result<()> {
                 "-".dimmed(),
                 "-".dimmed(),
                 "-".dimmed()
-            )?;
+            );
+            if row_idx == selected {
+                writeln!(stdout, "{}\r", line.on_bright_black())?;
+            } else {
+                writeln!(stdout, "{line}\r")?;
+            }
             total_count += 1;
+            row_idx += 1;
             continue;
         }
 
         online_count += 1;
 
         if snap.switches.is_empty() {
+            let indicator = if row_idx == selected {
+                ">".bold().cyan().to_string()
+            } else {
+                " ".to_string()
+            };
             let temp = snap
                 .temperature_c
-                .map(|t| format!("{t:.0}\u{00b0}C"))
+                .map(|t| format!("{t:.0}°C"))
                 .unwrap_or_else(|| "-".into());
             let rssi = snap
                 .rssi
@@ -202,9 +357,9 @@ fn render(stdout: &mut io::Stdout, snapshots: &[DeviceSnapshot]) -> Result<()> {
                 .map(format_duration_short)
                 .unwrap_or_else(|| "-".into());
 
-            writeln!(
-                stdout,
-                " {:<30} {:<5} {:>8} {:>8} {:>7} {:>10} {:>6} {}\r",
+            let line = format!(
+                " {} {:<30} {:<5} {:>8} {:>8} {:>7} {:>10} {:>6} {}",
+                indicator,
                 snap.name,
                 "-".dimmed(),
                 "-".dimmed(),
@@ -213,23 +368,38 @@ fn render(stdout: &mut io::Stdout, snapshots: &[DeviceSnapshot]) -> Result<()> {
                 "-".dimmed(),
                 rssi,
                 uptime,
-            )?;
+            );
+            if row_idx == selected {
+                writeln!(stdout, "{}\r", line.on_bright_black())?;
+            } else {
+                writeln!(stdout, "{line}\r")?;
+            }
             total_count += 1;
+            row_idx += 1;
         } else {
             for sw in &snap.switches {
                 total_count += 1;
+                let indicator = if row_idx == selected {
+                    ">".bold().cyan().to_string()
+                } else {
+                    " ".to_string()
+                };
+
                 let label = if snap.switches.len() > 1 {
                     format!("{} [{}]", snap.name, sw.id)
                 } else {
                     snap.name.clone()
                 };
 
-                let state: String = if sw.output {
+                let (state, state_padded): (String, String) = if sw.output {
                     on_count += 1;
-                    "ON".green().to_string()
+                    let s = "ON".green().to_string();
+                    (s.clone(), format!("{s}   "))
                 } else {
-                    "OFF".dimmed().to_string()
+                    let s = "OFF".dimmed().to_string();
+                    (s.clone(), format!("{s}  "))
                 };
+                let _ = state; // used via state_padded
 
                 let power = sw
                     .power_watts
@@ -246,7 +416,7 @@ fn render(stdout: &mut io::Stdout, snapshots: &[DeviceSnapshot]) -> Result<()> {
 
                 let temp = snap
                     .temperature_c
-                    .map(|t| format!("{t:.0}\u{00b0}C"))
+                    .map(|t| format!("{t:.0}°C"))
                     .unwrap_or_else(|| "-".into());
 
                 let energy = sw
@@ -264,30 +434,26 @@ fn render(stdout: &mut io::Stdout, snapshots: &[DeviceSnapshot]) -> Result<()> {
                     .map(format_duration_short)
                     .unwrap_or_else(|| "-".into());
 
-                // ANSI codes break format width, so pad state manually
-                let state_padded = if sw.output {
-                    // "ON" is 2 chars, pad to 5
-                    format!("{state}   ")
+                let line = format!(
+                    " {} {:<30} {} {:>8} {:>8} {:>7} {:>10} {:>6} {}",
+                    indicator, label, state_padded, power, voltage, temp, energy, rssi, uptime,
+                );
+                if row_idx == selected {
+                    writeln!(stdout, "{}\r", line.on_bright_black())?;
                 } else {
-                    // "OFF" is 3 chars, pad to 5
-                    format!("{state}  ")
-                };
-
-                writeln!(
-                    stdout,
-                    " {:<30} {} {:>8} {:>8} {:>7} {:>10} {:>6} {}\r",
-                    label, state_padded, power, voltage, temp, energy, rssi, uptime,
-                )?;
+                    writeln!(stdout, "{line}\r")?;
+                }
+                row_idx += 1;
             }
         }
     }
 
-    writeln!(stdout, " {}\r", "-".repeat(95).dimmed())?;
+    writeln!(stdout, "   {}\r", "-".repeat(93).dimmed())?;
 
     let power_display = format!("{total_power:.1}W").bold().to_string();
     writeln!(
         stdout,
-        " Total: {power_display}  |  {on_count}/{total_count} ON  |  {online_count}/{} online\r",
+        "   Total: {power_display}  |  {on_count}/{total_count} ON  |  {online_count}/{} online\r",
         snapshots.len()
     )?;
 
