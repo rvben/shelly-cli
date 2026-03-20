@@ -237,13 +237,47 @@ fn colored_on_off(on: bool, color: bool) -> String {
     }
 }
 
-/// Auto-detect the local IPv4 subnet from the default network interface.
+/// Auto-detect the local IPv4 subnet from network interfaces.
 ///
-/// Uses the default interface's IPv4 address and prefix length to compute
-/// the network address in CIDR notation (e.g. "192.168.1.0/24").
+/// Prefers non-tunnel interfaces with private IPv4 addresses and reasonable
+/// prefix lengths (/8 to /30). Falls back to the default interface if no
+/// better candidate is found.
 fn detect_subnet() -> Option<String> {
-    let iface = netdev::get_default_interface().ok()?;
-    let addr_info = iface.ipv4.first()?;
+    let interfaces = netdev::get_interfaces();
+
+    // Find the best candidate: non-tunnel, private IPv4, reasonable prefix
+    let candidate = interfaces
+        .iter()
+        .filter(|iface| {
+            // Skip loopback and tunnel interfaces (utun, tun, tap, wg)
+            let name = &iface.name;
+            !name.starts_with("lo")
+                && !name.starts_with("utun")
+                && !name.starts_with("tun")
+                && !name.starts_with("tap")
+                && !name.starts_with("wg")
+                && !name.starts_with("tailscale")
+                && !name.starts_with("docker")
+                && !name.starts_with("br-")
+                && !name.starts_with("veth")
+        })
+        .flat_map(|iface| &iface.ipv4)
+        .filter(|addr_info| {
+            let ip = addr_info.addr();
+            let prefix = addr_info.prefix_len();
+            // Private ranges with reasonable subnet sizes
+            ip.is_private() && prefix >= 8 && prefix <= 30
+        })
+        .next();
+
+    // Fall back to default interface
+    let addr_info = if let Some(addr) = candidate {
+        addr.clone()
+    } else {
+        let iface = netdev::get_default_interface().ok()?;
+        iface.ipv4.first()?.clone()
+    };
+
     let ip = addr_info.addr();
     let prefix_len = addr_info.prefix_len();
 
