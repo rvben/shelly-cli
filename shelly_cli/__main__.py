@@ -1,30 +1,35 @@
 """
 Command-line interface for shelly-cli.
+
+Finds the native Rust binary installed by maturin and executes it.
 """
 
 from __future__ import annotations
 
 import os
+import shutil
 import sys
 import subprocess
 from pathlib import Path
 
 
 def find_native_binary() -> str:
-    """Find the native Rust binary."""
-    project_root = Path(__file__).resolve().parent.parent.parent
-    target_binary = project_root / "target" / "release" / "shelly"
-    if target_binary.exists() and not target_binary.is_dir():
-        return str(target_binary)
+    """Find the native shelly binary installed alongside this package."""
+    # maturin places the binary in the same bin/ directory as this script
+    bin_dir = Path(sys.executable).parent
+    for name in ("shelly", "shelly.exe"):
+        candidate = bin_dir / name
+        if candidate.is_file():
+            return str(candidate)
 
-    if sys.platform == "win32":
-        target_binary = project_root / "target" / "release" / "shelly.exe"
-        if target_binary.exists() and not target_binary.is_dir():
-            return str(target_binary)
+    # Fallback: check PATH
+    found = shutil.which("shelly")
+    if found:
+        return found
 
     raise FileNotFoundError(
         "Could not find the native shelly binary. "
-        "Please ensure it was built with 'cargo build --release'."
+        "Please ensure shelly-cli is installed correctly."
     )
 
 
@@ -39,7 +44,7 @@ def main() -> int:
             return completed_process.returncode
         else:
             os.execv(native_binary, args)
-            return 0
+            return 0  # unreachable, but satisfies type checkers
     except FileNotFoundError as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
