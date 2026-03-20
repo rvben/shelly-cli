@@ -2,14 +2,18 @@
 
 A fast CLI for discovering, monitoring, and controlling Shelly smart home devices.
 
-![CI](https://github.com/rvben/shelly-cli/actions/workflows/ci.yml/badge.svg) [![crates.io](https://img.shields.io/crates/v/shelly-cli.svg)](https://crates.io/crates/shelly-cli) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+![CI](https://github.com/rvben/shelly-cli/actions/workflows/ci.yml/badge.svg) [![crates.io](https://img.shields.io/crates/v/shelly-cli.svg)](https://crates.io/crates/shelly-cli) [![PyPI](https://img.shields.io/pypi/v/shelly-cli.svg)](https://pypi.org/project/shelly-cli/) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 ## Features
 
-- Auto-discovery of Shelly devices on the local network
+- Auto-discovery of Shelly devices on the local network (with subnet auto-detection)
 - Unified Gen1 + Gen2/Gen3 support (transparent protocol handling)
+- Multi-switch device support (e.g., Shelly 2.5 with dual relays)
 - Interactive watch dashboard with live power, temperature, WiFi monitoring -- and switch control
+- Energy consumption tracking (total kWh per device)
+- Detailed device info view (model, firmware, uptime, WiFi, temperature)
 - Device health checks (temperature, WiFi signal, firmware, uptime)
+- Device authentication (`--password` flag or config file)
 - Device groups with filter-based and name-based definitions
 - Firmware check and update across all devices
 - Device renaming from the CLI
@@ -26,6 +30,12 @@ A fast CLI for discovering, monitoring, and controlling Shelly smart home device
 uv tool install shelly-cli
 ```
 
+### Homebrew (macOS/Linux)
+
+```bash
+brew install rvben/tap/shelly-cli
+```
+
 ### pip
 
 ```bash
@@ -38,29 +48,15 @@ pip install shelly-cli
 cargo install shelly-cli
 ```
 
-### Homebrew (macOS/Linux)
-
-```bash
-brew install rvben/tap/shelly-cli
-```
-
 ### Pre-built binaries
 
 Download from [GitHub Releases](https://github.com/rvben/shelly-cli/releases).
 
-### From source
-
-```bash
-git clone https://github.com/rvben/shelly-cli.git
-cd shelly-cli
-cargo install --path .
-```
-
 ## Quick Start
 
 ```bash
-# 1. Discover devices on your network
-shelly discover --subnet 192.168.1.0/24
+# 1. Discover devices (auto-detects your subnet)
+shelly discover
 
 # 2. See what you found
 shelly devices
@@ -86,6 +82,8 @@ shelly status -n "Kitchen Light"   # Get status
 shelly watch                       # Interactive dashboard
 shelly health                      # Health check all devices
 shelly power -a                    # Power usage for all devices
+shelly energy -a                   # Total energy (kWh) per device
+shelly info -n "Kitchen Light"     # Detailed device info
 ```
 
 ### Device management
@@ -104,6 +102,19 @@ shelly group add lights "Kitchen" "Living Room" "Bedroom"
 shelly group list
 shelly -g lights off               # Turn off all lights
 shelly -g lights status            # Status of all lights
+```
+
+### Authentication
+
+For devices with authentication enabled:
+
+```bash
+# Per-command
+shelly --password "secret" status -a
+
+# Or set in config file (~/.config/shelly-cli/config.toml)
+# [auth]
+# password = "secret"
 ```
 
 ### Configuration
