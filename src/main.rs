@@ -809,8 +809,17 @@ async fn cmd_firmware(
                                     info.display_name(),
                                     info.ip,
                                     output::short_fw(&fw.current_version),
-                                    fw.stable_version.as_deref().map(output::short_fw).unwrap_or("-"),
-                                    format!("{}{update_marker}", fw.beta_version.as_deref().map(output::short_fw).unwrap_or("-")),
+                                    fw.stable_version
+                                        .as_deref()
+                                        .map(output::short_fw)
+                                        .unwrap_or("-"),
+                                    format!(
+                                        "{}{update_marker}",
+                                        fw.beta_version
+                                            .as_deref()
+                                            .map(output::short_fw)
+                                            .unwrap_or("-")
+                                    ),
                                 );
                             }
                         }
