@@ -1,4 +1,6 @@
 use std::net::{IpAddr, Ipv4Addr};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use anyhow::Result;
@@ -13,6 +15,7 @@ use super::probe_device;
 pub async fn scan_subnet(
     subnet: Ipv4Net,
     http_timeout: Duration,
+    show_progress: bool,
     on_found: impl Fn(&DeviceInfo),
 ) -> Result<Vec<DeviceInfo>> {
     let client = reqwest::Client::builder().timeout(http_timeout).build()?;
@@ -20,22 +23,37 @@ pub async fn scan_subnet(
     let (tx, mut rx) = mpsc::channel::<DeviceInfo>(64);
 
     let hosts: Vec<Ipv4Addr> = subnet.hosts().collect();
+    let total = hosts.len() as u32;
+    let completed = Arc::new(AtomicU32::new(0));
+
     for chunk in hosts.chunks(32) {
         let mut handles = Vec::new();
         for &ip in chunk {
             let client = client.clone();
             let tx = tx.clone();
+            let completed = Arc::clone(&completed);
             handles.push(tokio::spawn(async move {
                 let addr = IpAddr::V4(ip);
                 if let Ok(Ok(info)) = timeout(http_timeout, probe_device(addr, &client)).await {
                     let _ = tx.send(info).await;
                 }
+                completed.fetch_add(1, Ordering::Relaxed);
             }));
         }
 
         for handle in handles {
             let _ = handle.await;
         }
+
+        if show_progress {
+            let done = completed.load(Ordering::Relaxed);
+            eprint!("\rScanning {subnet}... {done}/{total}");
+        }
+    }
+
+    if show_progress {
+        // Clear the progress line
+        eprint!("\r{}\r", " ".repeat(60));
     }
 
     drop(tx);

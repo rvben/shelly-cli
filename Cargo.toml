@@ -10,6 +10,7 @@ keywords = ["shelly", "home-automation", "iot", "smart-home", "cli"]
 categories = ["command-line-utilities", "network-programming"]
 readme = "README.md"
 authors = ["Ruben Jongejan <ruben.jongejan@gmail.com>"]
+default-run = "shelly"
 
 [[bin]]
 name = "shelly"

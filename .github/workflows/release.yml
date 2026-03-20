@@ -150,3 +150,93 @@ jobs:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
         run: twine upload artifacts/wheels/**/*.whl artifacts/sdist/*.tar.gz
+
+  update-homebrew:
+    needs: release
+    runs-on: ubuntu-latest
+    env:
+      HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+    steps:
+      - name: Check for tap token
+        id: check-token
+        run: |
+          if [ -z "$HOMEBREW_TAP_TOKEN" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "HOMEBREW_TAP_TOKEN not set, skipping Homebrew formula update"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download release assets and compute SHA256 hashes
+        if: steps.check-token.outputs.skip == 'false'
+        run: |
+          TAG="${{ github.ref_name }}"
+          BASE_URL="https://github.com/rvben/shelly-cli/releases/download/${TAG}"
+          for target in aarch64-apple-darwin x86_64-apple-darwin aarch64-unknown-linux-gnu x86_64-unknown-linux-gnu; do
+            curl -fsSL -o "shelly-${TAG}-${target}.tar.gz" "${BASE_URL}/shelly-${TAG}-${target}.tar.gz"
+          done
+          echo "SHA_MACOS_ARM64=$(sha256sum shelly-${TAG}-aarch64-apple-darwin.tar.gz | cut -d' ' -f1)" >> "$GITHUB_ENV"
+          echo "SHA_MACOS_X86=$(sha256sum shelly-${TAG}-x86_64-apple-darwin.tar.gz | cut -d' ' -f1)" >> "$GITHUB_ENV"
+          echo "SHA_LINUX_ARM64=$(sha256sum shelly-${TAG}-aarch64-unknown-linux-gnu.tar.gz | cut -d' ' -f1)" >> "$GITHUB_ENV"
+          echo "SHA_LINUX_X86=$(sha256sum shelly-${TAG}-x86_64-unknown-linux-gnu.tar.gz | cut -d' ' -f1)" >> "$GITHUB_ENV"
+
+      - name: Update Homebrew formula
+        if: steps.check-token.outputs.skip == 'false'
+        run: |
+          TAG="${{ github.ref_name }}"
+          VERSION="${TAG#v}"
+
+          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/rvben/homebrew-tap.git" homebrew-tap
+          cd homebrew-tap
+
+          cat > Formula/shelly-cli.rb << 'FORMULA'
+          class ShellyCli < Formula
+            desc "Fast CLI for discovering, monitoring, and controlling Shelly devices"
+            homepage "https://github.com/rvben/shelly-cli"
+            version "VERSION_PLACEHOLDER"
+            license "MIT"
+
+            on_macos do
+              if Hardware::CPU.arm?
+                url "https://github.com/rvben/shelly-cli/releases/download/v#{version}/shelly-v#{version}-aarch64-apple-darwin.tar.gz"
+                sha256 "SHA_MACOS_ARM64_PLACEHOLDER"
+              else
+                url "https://github.com/rvben/shelly-cli/releases/download/v#{version}/shelly-v#{version}-x86_64-apple-darwin.tar.gz"
+                sha256 "SHA_MACOS_X86_PLACEHOLDER"
+              end
+            end
+
+            on_linux do
+              if Hardware::CPU.arm?
+                url "https://github.com/rvben/shelly-cli/releases/download/v#{version}/shelly-v#{version}-aarch64-unknown-linux-gnu.tar.gz"
+                sha256 "SHA_LINUX_ARM64_PLACEHOLDER"
+              else
+                url "https://github.com/rvben/shelly-cli/releases/download/v#{version}/shelly-v#{version}-x86_64-unknown-linux-gnu.tar.gz"
+                sha256 "SHA_LINUX_X86_PLACEHOLDER"
+              end
+            end
+
+            def install
+              bin.install "shelly"
+              bin.install_symlink "shelly" => "shelly-cli"
+            end
+
+            test do
+              assert_match "shelly #{version}", shell_output("#{bin}/shelly --version")
+            end
+          end
+          FORMULA
+
+          # Remove leading whitespace from heredoc and replace placeholders
+          sed -i 's/^          //' Formula/shelly-cli.rb
+          sed -i "s/VERSION_PLACEHOLDER/${VERSION}/" Formula/shelly-cli.rb
+          sed -i "s/SHA_MACOS_ARM64_PLACEHOLDER/${SHA_MACOS_ARM64}/" Formula/shelly-cli.rb
+          sed -i "s/SHA_MACOS_X86_PLACEHOLDER/${SHA_MACOS_X86}/" Formula/shelly-cli.rb
+          sed -i "s/SHA_LINUX_ARM64_PLACEHOLDER/${SHA_LINUX_ARM64}/" Formula/shelly-cli.rb
+          sed -i "s/SHA_LINUX_X86_PLACEHOLDER/${SHA_LINUX_X86}/" Formula/shelly-cli.rb
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/shelly-cli.rb
+          git commit -m "Update shelly-cli to ${VERSION}"
+          git push

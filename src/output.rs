@@ -28,7 +28,7 @@ pub fn use_color() -> bool {
 }
 
 /// Shorten firmware version for display: extract version from Gen1's long format.
-fn short_fw(fw: &str) -> &str {
+pub fn short_fw(fw: &str) -> &str {
     // Gen1: "20230913-113709/v1.14.0-gcb84623" → "v1.14.0"
     if let Some(rest) = fw.strip_prefix("20")
         && let Some(slash_pos) = rest.find('/')
@@ -183,6 +183,168 @@ pub fn format_duration(seconds: u64) -> String {
         format!("{hours}h {mins}m")
     } else {
         format!("{mins}m")
+    }
+}
+
+pub fn print_device_info(info: &DeviceInfo, status: &DeviceStatus) {
+    let color = use_color();
+
+    let name = info.display_name();
+    if color {
+        println!("{}", name.bold());
+    } else {
+        println!("{name}");
+    }
+
+    let label = |l: &str| -> String {
+        if color {
+            format!("{}", l.dimmed())
+        } else {
+            l.to_string()
+        }
+    };
+
+    // Model line: friendly app name + model ID for Gen2/3, just model for Gen1
+    let model_display = if let Some(ref app) = info.app {
+        format!("{app} ({})", info.model)
+    } else if let Some(ref dtype) = info.device_type {
+        format!("Shelly ({dtype})")
+    } else {
+        info.model.clone()
+    };
+    println!("  {}  {model_display}", label("Model:      "));
+    println!("  {}  {}", label("Generation: "), info.generation);
+    println!("  {}  {}", label("IP:         "), info.ip);
+    if !info.mac.is_empty() {
+        println!("  {}  {}", label("MAC:        "), info.mac);
+    }
+    println!(
+        "  {}  {}",
+        label("Firmware:   "),
+        short_fw(&info.firmware_version)
+    );
+
+    if let Some(uptime) = status.uptime {
+        println!("  {}  {}", label("Uptime:     "), format_duration(uptime));
+    }
+
+    if let Some(ref wifi) = status.wifi {
+        let rssi_str = wifi.rssi.map_or(String::new(), |r| format!(" ({r} dBm)"));
+        let ssid = wifi.ssid.as_deref().unwrap_or("?");
+        println!("  {}  {ssid}{rssi_str}", label("WiFi:       "));
+    }
+
+    if let Some(cloud) = status.cloud_connected {
+        let cloud_str = if cloud { "connected" } else { "disconnected" };
+        println!("  {}  {cloud_str}", label("Cloud:      "));
+    }
+
+    if let Some(temp) = status.temperature_c {
+        println!("  {}  {temp:.1}\u{00b0}C", label("Temperature:"));
+    }
+
+    for sw in &status.switches {
+        let state = if sw.output { "ON" } else { "OFF" };
+        let power_str = sw
+            .power_watts
+            .map(|w| format!(" ({w:.1}W)"))
+            .unwrap_or_default();
+
+        let state_display = if color {
+            if sw.output {
+                format!("{}{power_str}", state.green())
+            } else {
+                format!("{}{power_str}", state.dimmed())
+            }
+        } else {
+            format!("{state}{power_str}")
+        };
+
+        let switch_label = format!("Switch {}:   ", sw.id);
+        println!("  {}  {state_display}", label(&switch_label));
+
+        if let Some(total) = sw.total_energy_wh {
+            let kwh = total / 1000.0;
+            println!("  {}  {kwh:.2} kWh", label("Total Energy:"));
+        }
+    }
+}
+
+pub fn device_info_json(info: &DeviceInfo, status: &DeviceStatus) -> serde_json::Value {
+    let model_display = if let Some(ref app) = info.app {
+        format!("{app} ({})", info.model)
+    } else if let Some(ref dtype) = info.device_type {
+        format!("Shelly ({dtype})")
+    } else {
+        info.model.clone()
+    };
+
+    let cloud_str = status
+        .cloud_connected
+        .map(|c| if c { "connected" } else { "disconnected" });
+
+    let wifi_ssid = status.wifi.as_ref().and_then(|w| w.ssid.clone());
+    let wifi_rssi = status.wifi.as_ref().and_then(|w| w.rssi);
+
+    let switches: Vec<serde_json::Value> = status
+        .switches
+        .iter()
+        .map(|sw| {
+            serde_json::json!({
+                "id": sw.id,
+                "output": sw.output,
+                "power_watts": sw.power_watts,
+                "total_energy_wh": sw.total_energy_wh,
+            })
+        })
+        .collect();
+
+    serde_json::json!({
+        "name": info.display_name(),
+        "model": model_display,
+        "model_id": info.model,
+        "generation": info.generation.to_string(),
+        "ip": info.ip.to_string(),
+        "mac": info.mac,
+        "firmware": short_fw(&info.firmware_version),
+        "uptime_seconds": status.uptime,
+        "uptime": status.uptime.map(format_duration),
+        "wifi_ssid": wifi_ssid,
+        "wifi_rssi": wifi_rssi,
+        "cloud": cloud_str,
+        "temperature_c": status.temperature_c,
+        "switches": switches,
+    })
+}
+
+/// Width of the energy table (device name + total kWh columns).
+const ENERGY_TABLE_WIDTH: usize = 46;
+
+pub fn print_energy_header() {
+    let header = format!("{:<34} {:>11}", "Device", "Total (kWh)");
+    if use_color() {
+        println!("{}", header.bold());
+        println!("{}", "\u{2500}".repeat(ENERGY_TABLE_WIDTH).dimmed());
+    } else {
+        println!("{header}");
+        println!("{}", "-".repeat(ENERGY_TABLE_WIDTH));
+    }
+}
+
+pub fn print_energy_row(name: &str, kwh: Option<f64>) {
+    match kwh {
+        Some(val) => println!("{:<34} {:>11.2}", name, val),
+        None => println!("{:<34} {:>11}", name, "-"),
+    }
+}
+
+pub fn print_energy_footer(total_kwh: f64) {
+    if use_color() {
+        println!("{}", "\u{2500}".repeat(ENERGY_TABLE_WIDTH).dimmed());
+        println!("{}", format!("{:<34} {:>11.2}", "Total", total_kwh).bold());
+    } else {
+        println!("{}", "-".repeat(ENERGY_TABLE_WIDTH));
+        println!("{:<34} {:>11.2}", "Total", total_kwh);
     }
 }
 

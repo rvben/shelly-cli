@@ -15,7 +15,7 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use clap::Parser;
+use clap::{CommandFactory, FromArgMatches};
 use owo_colors::OwoColorize;
 
 use cli::{Cli, Command, ConfigAction, FirmwareAction, GroupAction, SwitchAction};
@@ -41,7 +41,20 @@ async fn main() {
 }
 
 async fn run() -> Result<()> {
-    let mut cli = Cli::parse();
+    let bin_name: &'static str = {
+        let name = std::env::args()
+            .next()
+            .and_then(|arg| {
+                std::path::Path::new(&arg)
+                    .file_name()
+                    .map(|f| f.to_string_lossy().into_owned())
+            })
+            .unwrap_or_else(|| "shelly".to_string());
+        Box::leak(name.into_boxed_str())
+    };
+
+    let matches = Cli::command().name(bin_name).get_matches();
+    let mut cli = Cli::from_arg_matches(&matches)?;
 
     let json_output = cli.json || !std::io::stdout().is_terminal();
     let timeout = Duration::from_millis(cli.timeout);
@@ -77,6 +90,9 @@ async fn run() -> Result<()> {
         Command::Power { all, id } => {
             cmd_power(&cli, &http_client, &password, all, id, json_output).await
         }
+        Command::Energy { all } => {
+            cmd_energy(&cli, &http_client, &password, all, json_output).await
+        }
         Command::Firmware { ref action } => {
             cmd_firmware(&cli, &http_client, &password, action.clone(), json_output).await
         }
@@ -88,6 +104,7 @@ async fn run() -> Result<()> {
         }
         Command::Reboot => cmd_reboot(&cli, &http_client, &password, json_output).await,
         Command::Watch { interval } => cmd_watch(&cli, &http_client, &password, interval).await,
+        Command::Info => cmd_info(&cli, &http_client, &password, json_output).await,
         Command::Health => cmd_health(&cli, &http_client, &password, json_output).await,
         Command::Group { ref action } => cmd_group(action.clone(), json_output),
         Command::Schema => {
@@ -264,12 +281,18 @@ async fn cmd_discover(
         .parse()
         .with_context(|| format!("invalid subnet: {subnet_str}"))?;
 
-    if !quiet {
+    let show_progress = !quiet && !json_output && std::io::stderr().is_terminal();
+
+    if !quiet && !show_progress {
         eprintln!("Scanning {subnet}...");
     }
 
-    let mut devices = api::discovery::scan_subnet(subnet, timeout, |info| {
+    let mut devices = api::discovery::scan_subnet(subnet, timeout, show_progress, |info| {
         if !quiet && !json_output {
+            if show_progress {
+                // Clear progress line before printing found device
+                eprint!("\r{}\r", " ".repeat(60));
+            }
             eprintln!("  Found: {} at {}", info.display_name(), info.ip);
         }
     })
@@ -550,6 +573,126 @@ async fn cmd_power(
             output::print_json_success(&reading);
         } else {
             output::print_power_reading(device.info().display_name(), &reading);
+        }
+    }
+
+    Ok(())
+}
+
+async fn cmd_energy(
+    cli: &Cli,
+    http_client: &reqwest::Client,
+    password: &Option<String>,
+    all: bool,
+    json_output: bool,
+) -> Result<()> {
+    if all || cli.group.is_some() {
+        let devices = resolve_all_or_group(cli)?;
+
+        if !json_output {
+            output::print_energy_header();
+        }
+
+        let mut results = Vec::new();
+        let mut grand_total_kwh = 0.0;
+
+        for info in &devices {
+            warn_if_auth_required(info, password);
+            let device = api::create_device(info.clone(), http_client.clone(), password.clone());
+            let name = info.display_name().to_string();
+
+            if info.num_meters == 0 {
+                if json_output {
+                    results.push(serde_json::json!({
+                        "device": name,
+                        "ip": info.ip.to_string(),
+                        "total_kwh": null,
+                        "note": "no meter",
+                    }));
+                } else {
+                    output::print_energy_row(&name, None);
+                }
+                continue;
+            }
+
+            let mut device_total_wh = 0.0;
+            let mut any_error = false;
+
+            for meter_id in 0..info.num_meters {
+                match device.power(meter_id).await {
+                    Ok(reading) => {
+                        device_total_wh += reading.total_energy_wh;
+                    }
+                    Err(e) => {
+                        any_error = true;
+                        if json_output {
+                            results.push(serde_json::json!({
+                                "device": name,
+                                "ip": info.ip.to_string(),
+                                "error": e.to_string(),
+                            }));
+                        } else {
+                            eprintln!("{:<34} error: {e}", name);
+                        }
+                    }
+                }
+            }
+
+            if !any_error {
+                let kwh = device_total_wh / 1000.0;
+                grand_total_kwh += kwh;
+                if json_output {
+                    results.push(serde_json::json!({
+                        "device": name,
+                        "ip": info.ip.to_string(),
+                        "total_kwh": kwh,
+                    }));
+                } else {
+                    output::print_energy_row(&name, Some(kwh));
+                }
+            }
+        }
+
+        if json_output {
+            output::print_json_success(&serde_json::json!({
+                "devices": results,
+                "total_kwh": grand_total_kwh,
+            }));
+        } else {
+            output::print_energy_footer(grand_total_kwh);
+        }
+    } else {
+        let targets = resolve_and_probe_targets(cli, http_client, password).await?;
+        let device = &targets[0];
+        let info = device.info();
+        let name = info.display_name().to_string();
+
+        let mut results = Vec::new();
+        let mut device_total_wh = 0.0;
+
+        for meter_id in 0..info.num_meters {
+            let reading = device.power(meter_id).await?;
+            device_total_wh += reading.total_energy_wh;
+            results.push(reading);
+        }
+
+        let total_kwh = device_total_wh / 1000.0;
+
+        if json_output {
+            output::print_json_success(&serde_json::json!({
+                "device": name,
+                "total_kwh": total_kwh,
+                "meters": results,
+            }));
+        } else if results.len() > 1 {
+            output::print_energy_header();
+            for reading in &results {
+                let label = format!("{name} [{}]", reading.id);
+                output::print_energy_row(&label, Some(reading.total_energy_wh / 1000.0));
+            }
+            output::print_energy_footer(total_kwh);
+        } else {
+            println!("{name}: {total_kwh:.2} kWh");
         }
     }
 
@@ -852,6 +995,27 @@ async fn cmd_watch(
     let devices = resolve_all_or_group(cli)?;
     let interval = Duration::from_secs(interval_secs);
     watch::run(&devices, http_client, password.clone(), interval).await
+}
+
+async fn cmd_info(
+    cli: &Cli,
+    http_client: &reqwest::Client,
+    password: &Option<String>,
+    json_output: bool,
+) -> Result<()> {
+    let targets = resolve_and_probe_targets(cli, http_client, password).await?;
+    let device = &targets[0];
+    let info = device.info();
+    let status = device.status().await?;
+
+    if json_output {
+        let json = output::device_info_json(info, &status);
+        output::print_json_success(&json);
+    } else {
+        output::print_device_info(info, &status);
+    }
+
+    Ok(())
 }
 
 async fn cmd_health(

@@ -2,7 +2,6 @@ use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(
-    name = "shelly",
     about = "CLI for managing Shelly devices",
     version,
     after_long_help = "\
@@ -11,6 +10,7 @@ Examples:
   shelly on \"Kitchen Light\"
   shelly status -n \"Living Room\"
   shelly power -a
+  shelly energy -a
   shelly health
   shelly watch
   shelly -g lights off"
@@ -115,6 +115,13 @@ pub enum Command {
         id: u8,
     },
 
+    /// Show total energy consumption (kWh) across devices
+    Energy {
+        /// Query all known devices
+        #[arg(long, short = 'a')]
+        all: bool,
+    },
+
     /// Check or update firmware
     Firmware {
         #[command(subcommand)]
@@ -142,6 +149,9 @@ pub enum Command {
         #[arg(long, default_value = "2")]
         interval: u64,
     },
+
+    /// Show detailed information about a device
+    Info,
 
     /// Check device health (temperature, WiFi, firmware, online status)
     Health,
