@@ -26,18 +26,25 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             use_cross: true
+            maturin_compat: manylinux_2_28
+            maturin_zig: true
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
             use_cross: true
+            maturin_compat: manylinux_2_28
+            maturin_zig: true
           - target: x86_64-apple-darwin
             os: macos-latest
             use_cross: false
+            maturin_zig: false
           - target: aarch64-apple-darwin
             os: macos-latest
             use_cross: false
+            maturin_zig: false
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             use_cross: false
+            maturin_zig: false
     runs-on: ${{ matrix.os }}
     permissions:
       contents: write
@@ -48,11 +55,22 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install maturin
+        run: pip install maturin
+
+      - name: Install zig
+        if: matrix.maturin_zig
+        run: pip install ziglang
+
       - name: Install cross
         if: matrix.use_cross
         run: cargo install cross --git https://github.com/cross-rs/cross
 
-      - name: Build
+      - name: Build binary
         run: |
           if [ "${{ matrix.use_cross }}" = "true" ]; then
             cross build --release --target ${{ matrix.target }}
@@ -61,25 +79,55 @@ jobs:
           fi
         shell: bash
 
-      - name: Package (unix)
+      - name: Build wheel
+        run: |
+          if [ "${{ matrix.maturin_zig }}" = "true" ]; then
+            maturin build --release --target ${{ matrix.target }} --compatibility ${{ matrix.maturin_compat }} --zig
+          else
+            maturin build --release --target ${{ matrix.target }}
+          fi
+        shell: bash
+
+      - name: Package binary (unix)
         if: matrix.os != 'windows-latest'
         run: |
           cd target/${{ matrix.target }}/release
           tar czf ../../../shelly-${{ github.ref_name }}-${{ matrix.target }}.tar.gz shelly
         shell: bash
 
-      - name: Package (windows)
+      - name: Package binary (windows)
         if: matrix.os == 'windows-latest'
         run: |
           cd target/${{ matrix.target }}/release
           7z a ../../../shelly-${{ github.ref_name }}-${{ matrix.target }}.zip shelly.exe
         shell: bash
 
-      - name: Upload artifact
+      - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
-          name: shelly-${{ matrix.target }}
+          name: binary-${{ matrix.target }}
           path: shelly-${{ github.ref_name }}-${{ matrix.target }}.*
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.target }}
+          path: target/wheels/*.whl
+
+  sdist:
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install maturin
+      - run: maturin sdist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: target/wheels/*.tar.gz
 
   release:
     needs: build
@@ -89,6 +137,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
+          pattern: binary-*
           merge-multiple: true
 
       - name: Create GitHub Release
@@ -99,7 +148,7 @@ jobs:
             shelly-*.tar.gz
             shelly-*.zip
 
-  publish:
+  publish-crates:
     needs: release
     runs-on: ubuntu-latest
     steps:
@@ -108,3 +157,25 @@ jobs:
       - run: cargo publish --locked
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  publish-pypi:
+    needs: [build, sdist]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheel-*
+          path: artifacts/wheels
+      - uses: actions/download-artifact@v4
+        with:
+          name: sdist
+          path: artifacts/sdist
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install twine
+      - name: Publish to PyPI
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: twine upload artifacts/wheels/**/*.whl artifacts/sdist/*.tar.gz

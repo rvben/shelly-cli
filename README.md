@@ -20,7 +20,19 @@ A fast CLI for discovering, monitoring, and controlling Shelly smart home device
 
 ## Install
 
-### From source (cargo)
+### uv (recommended)
+
+```bash
+uv tool install shelly-cli
+```
+
+### pip
+
+```bash
+pip install shelly-cli
+```
+
+### Cargo
 
 ```bash
 cargo install shelly-cli
@@ -36,7 +48,7 @@ brew install rvben/tap/shelly-cli
 
 Download from [GitHub Releases](https://github.com/rvben/shelly-cli/releases).
 
-### From source (git)
+### From source
 
 ```bash
 git clone https://github.com/rvben/shelly-cli.git
