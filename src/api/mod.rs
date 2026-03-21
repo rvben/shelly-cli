@@ -118,6 +118,13 @@ impl ShellyDevice {
         }
     }
 
+    pub async fn config_restore(&self, config: &serde_json::Value) -> Result<()> {
+        match self {
+            Self::Gen1(d) => d.config_restore(config).await,
+            Self::Gen2(d) => d.config_restore(config).await,
+        }
+    }
+
     pub async fn set_name(&self, name: &str) -> Result<()> {
         match self {
             Self::Gen1(d) => d.set_name(name).await,

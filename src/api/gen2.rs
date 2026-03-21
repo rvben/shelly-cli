@@ -223,6 +223,69 @@ impl Gen2Device {
             .unwrap_or(serde_json::Value::Array(vec![])))
     }
 
+    pub async fn config_restore(&self, config: &serde_json::Value) -> Result<()> {
+        // Skip network-related config to avoid bricking the device
+        const SKIP_COMPONENTS: &[&str] = &["wifi", "eth", "ble", "cloud", "mqtt", "ws"];
+
+        let obj = config
+            .as_object()
+            .ok_or_else(|| anyhow::anyhow!("config must be a JSON object"))?;
+
+        for (component, value) in obj {
+            // Skip network/connectivity components
+            let base_component = component.split(':').next().unwrap_or(component);
+            if SKIP_COMPONENTS.contains(&base_component) {
+                continue;
+            }
+
+            // Skip non-object values (e.g. null, string)
+            if !value.is_object() {
+                continue;
+            }
+
+            // Try to apply config for this component
+            let params = serde_json::json!({
+                "config": { component: value }
+            });
+
+            // Determine the RPC method based on component type
+            let method = if component == "sys" {
+                "Sys.SetConfig"
+            } else if component.starts_with("switch:") {
+                "Switch.SetConfig"
+            } else if component.starts_with("input:") {
+                "Input.SetConfig"
+            } else {
+                // Generic: try the component-based method
+                continue;
+            };
+
+            // For Switch/Input, extract the ID and restructure params
+            let params = if component.contains(':') {
+                let id: u8 = component
+                    .split(':')
+                    .nth(1)
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0);
+                serde_json::json!({
+                    "id": id,
+                    "config": value
+                })
+            } else {
+                params
+            };
+
+            match self.rpc_call(method, Some(params)).await {
+                Ok(_) => {}
+                Err(e) => {
+                    eprintln!("  warning: failed to restore {component}: {e}");
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     pub async fn set_name(&self, name: &str) -> Result<()> {
         let params = serde_json::json!({
             "config": { "device": { "name": name } }

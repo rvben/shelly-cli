@@ -190,6 +190,47 @@ impl Gen1Device {
             .unwrap_or(serde_json::json!({})))
     }
 
+    pub async fn config_restore(&self, config: &serde_json::Value) -> Result<()> {
+        // For Gen1, restore only safe top-level settings
+        // Skip network/WiFi/MQTT/cloud settings
+        const SKIP_KEYS: &[&str] = &[
+            "wifi_ap",
+            "wifi_sta",
+            "wifi_sta1",
+            "mqtt",
+            "coiot",
+            "sntp",
+            "login",
+            "ap_roaming",
+        ];
+
+        let obj = config
+            .as_object()
+            .ok_or_else(|| anyhow::anyhow!("config must be a JSON object"))?;
+
+        let mut params = Vec::new();
+        for (key, value) in obj {
+            if SKIP_KEYS.contains(&key.as_str()) {
+                continue;
+            }
+
+            // Only restore simple scalar values via /settings?key=value
+            match value {
+                serde_json::Value::String(s) => params.push(format!("{key}={s}")),
+                serde_json::Value::Bool(b) => params.push(format!("{key}={b}")),
+                serde_json::Value::Number(n) => params.push(format!("{key}={n}")),
+                _ => continue,
+            }
+        }
+
+        if !params.is_empty() {
+            let query = params.join("&");
+            self.get_json(&format!("/settings?{query}")).await?;
+        }
+
+        Ok(())
+    }
+
     pub async fn set_name(&self, name: &str) -> Result<()> {
         let url = self.url("/settings");
         let mut req = self.client.get(&url).query(&[("name", name)]);

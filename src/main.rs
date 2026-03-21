@@ -108,6 +108,20 @@ async fn run() -> Result<()> {
         Command::Webhook { ref action } => {
             cmd_webhook(&cli, &http_client, &password, action.clone(), json_output).await
         }
+        Command::Backup { all, ref output } => {
+            cmd_backup(
+                &cli,
+                &http_client,
+                &password,
+                all,
+                output.clone(),
+                json_output,
+            )
+            .await
+        }
+        Command::Restore { ref file } => {
+            cmd_restore(&cli, &http_client, &password, file, json_output).await
+        }
         Command::Rename { ref new_name } => {
             cmd_rename(&cli, &http_client, &password, new_name, json_output).await
         }
@@ -1224,6 +1238,181 @@ fn print_webhook_entry(h: &serde_json::Value) {
             }
         }
     }
+}
+
+async fn cmd_backup(
+    cli: &Cli,
+    http_client: &reqwest::Client,
+    password: &Option<String>,
+    all: bool,
+    output_dir: Option<String>,
+    json_output: bool,
+) -> Result<()> {
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+
+    if all || cli.group.is_some() {
+        let devices = resolve_all_or_group(cli)?;
+        let dir = output_dir.unwrap_or_else(|| "shelly-backups".to_string());
+        std::fs::create_dir_all(&dir)?;
+
+        let mut results = Vec::new();
+        for info in &devices {
+            warn_if_auth_required(info, password);
+            let device = api::create_device(info.clone(), http_client.clone(), password.clone());
+            let name_slug = slug_name(info.display_name());
+
+            match device.config_get().await {
+                Ok(config) => {
+                    let backup = serde_json::json!({
+                        "device": info.display_name(),
+                        "ip": info.ip.to_string(),
+                        "model": info.model,
+                        "generation": info.generation.to_string(),
+                        "mac": info.mac,
+                        "firmware": info.firmware_version,
+                        "backup_date": &today,
+                        "config": config,
+                    });
+                    let filename = format!("{dir}/{name_slug}-{today}.json");
+                    let data = serde_json::to_string_pretty(&backup)?;
+                    std::fs::write(&filename, &data)?;
+
+                    if json_output {
+                        results.push(serde_json::json!({
+                            "device": info.display_name(),
+                            "file": filename,
+                            "status": "ok",
+                        }));
+                    } else {
+                        println!("{}: saved to {filename}", info.display_name());
+                    }
+                }
+                Err(e) => {
+                    if json_output {
+                        results.push(serde_json::json!({
+                            "device": info.display_name(),
+                            "error": e.to_string(),
+                        }));
+                    } else {
+                        eprintln!("{}: error: {e}", info.display_name());
+                    }
+                }
+            }
+        }
+
+        if json_output {
+            output::print_json_success(&results);
+        }
+    } else {
+        let targets = resolve_and_probe_targets(cli, http_client, password).await?;
+        let device = &targets[0];
+        let info = device.info();
+        let name_slug = slug_name(info.display_name());
+
+        let config = device.config_get().await?;
+        let backup = serde_json::json!({
+            "device": info.display_name(),
+            "ip": info.ip.to_string(),
+            "model": info.model,
+            "generation": info.generation.to_string(),
+            "mac": info.mac,
+            "firmware": info.firmware_version,
+            "backup_date": &today,
+            "config": config,
+        });
+
+        let dir = output_dir.unwrap_or_else(|| ".".to_string());
+        std::fs::create_dir_all(&dir)?;
+        let filename = format!("{dir}/{name_slug}-{today}.json");
+        let data = serde_json::to_string_pretty(&backup)?;
+        std::fs::write(&filename, &data)?;
+
+        if json_output {
+            output::print_json_success(&serde_json::json!({
+                "device": info.display_name(),
+                "file": filename,
+            }));
+        } else {
+            println!("Backup saved to {filename}");
+        }
+    }
+
+    Ok(())
+}
+
+async fn cmd_restore(
+    cli: &Cli,
+    http_client: &reqwest::Client,
+    password: &Option<String>,
+    file_path: &str,
+    json_output: bool,
+) -> Result<()> {
+    let data = std::fs::read_to_string(file_path)
+        .with_context(|| format!("failed to read backup file: {file_path}"))?;
+    let backup: serde_json::Value =
+        serde_json::from_str(&data).with_context(|| "invalid JSON in backup file")?;
+
+    let config = backup
+        .get("config")
+        .ok_or_else(|| anyhow::anyhow!("backup file missing 'config' field"))?;
+
+    let backup_device = backup
+        .get("device")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+    let backup_gen = backup
+        .get("generation")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+
+    let targets = resolve_and_probe_targets(cli, http_client, password).await?;
+    let device = &targets[0];
+    let info = device.info();
+
+    if !json_output {
+        eprintln!(
+            "Restoring config from '{}' (backup of {}, {}) to {} ({})",
+            file_path,
+            backup_device,
+            backup_gen,
+            info.display_name(),
+            info.generation,
+        );
+    }
+
+    device.config_restore(config).await?;
+
+    if json_output {
+        output::print_json_success(&serde_json::json!({
+            "device": info.display_name(),
+            "backup_file": file_path,
+            "backup_device": backup_device,
+            "status": "restored",
+        }));
+    } else {
+        println!(
+            "{}: config restored. Device may need a reboot to apply all changes.",
+            info.display_name()
+        );
+    }
+
+    Ok(())
+}
+
+/// Convert a device name to a filesystem-safe slug.
+fn slug_name(name: &str) -> String {
+    name.chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>()
+        .replace("--", "-")
+        .trim_matches('-')
+        .to_string()
 }
 
 async fn cmd_reboot(

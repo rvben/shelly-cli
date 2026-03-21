@@ -146,6 +146,22 @@ pub enum Command {
         action: WebhookAction,
     },
 
+    /// Backup device configuration to a JSON file
+    Backup {
+        /// Backup all known devices
+        #[arg(long, short = 'a')]
+        all: bool,
+        /// Output directory (default: current directory)
+        #[arg(long, short = 'o')]
+        output: Option<String>,
+    },
+
+    /// Restore device configuration from a backup file
+    Restore {
+        /// Path to the backup JSON file
+        file: String,
+    },
+
     /// Rename a device
     Rename {
         /// New name for the device
