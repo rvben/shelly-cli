@@ -16,9 +16,11 @@ A fast CLI for discovering, monitoring, and controlling Shelly smart home device
 - Device authentication (`--password` flag or config file)
 - Device groups with filter-based and name-based definitions
 - Firmware check and update across all devices
-- Device renaming from the CLI
+- Config backup and restore with network-safe defaults
+- Schedule and webhook inspection (Gen2/Gen3)
+- Device renaming and configuration from the CLI
 - Structured JSON output for scripting and AI agent integration
-- Shell completions (bash, zsh, fish, powershell)
+- Shell completions with dynamic device name suggestions (bash, zsh, fish)
 - Fuzzy device name matching with "did you mean?" suggestions
 - Color output with automatic detection
 
@@ -95,13 +97,48 @@ shelly firmware update -a                  # Update all firmware
 shelly reboot -n "Kitchen Light"          # Reboot device
 ```
 
+### Configuration
+
+```bash
+shelly config get -n "Kitchen"                  # Get device config (JSON)
+shelly config get -a                            # Get config for all devices
+shelly config set -n "Kitchen" eco_mode true    # Set a config value
+shelly config set -n "Kitchen" name "New Name"  # Rename via config
+```
+
+Supported config keys: `name`, `eco_mode`, `led_status_disable`.
+
+### Backup and restore
+
+```bash
+shelly backup -n "Kitchen"         # Backup single device
+shelly backup -a                   # Backup all devices to shelly-backups/
+shelly backup -a -o ~/backups      # Custom output directory
+
+shelly restore -n "Kitchen" shelly-backups/kitchen-2025-01-15.json
+```
+
+Restore skips network/WiFi/MQTT/cloud settings to avoid bricking devices.
+
+### Schedules and webhooks
+
+```bash
+shelly schedule list -n "Kitchen"  # View device schedules (Gen2/Gen3)
+shelly schedule list -a            # View all device schedules
+
+shelly webhook list -n "Kitchen"   # View device webhooks
+shelly webhook list -a             # View all device webhooks
+```
+
 ### Groups
 
 ```bash
 shelly group add lights "Kitchen" "Living Room" "Bedroom"
 shelly group list
+shelly group show lights
 shelly -g lights off               # Turn off all lights
 shelly -g lights status            # Status of all lights
+shelly -g gen3 firmware check      # Check firmware for Gen3 devices
 ```
 
 ### Authentication
@@ -117,11 +154,17 @@ shelly --password "secret" status -a
 # password = "secret"
 ```
 
-### Configuration
+### Shell completions
 
 ```bash
-shelly config get -n "Kitchen"     # Get device config
-shelly completions zsh             # Generate shell completions
+# Generate completions (includes dynamic device name suggestions)
+shelly completions zsh > ~/.zfunc/_shelly    # zsh
+shelly completions bash > /etc/bash_completion.d/shelly  # bash
+shelly completions fish > ~/.config/fish/completions/shelly.fish  # fish
+
+# After installing, tab-complete device names:
+# shelly -n <TAB>  →  "Kitchen Light"  "Living Room"  "Bedroom Fan"
+# shelly -g <TAB>  →  "lights"  "gen1"  "gen3"
 ```
 
 ## Agent Integration
@@ -136,9 +179,11 @@ shelly status -a | jq '.data'
 shelly -n "nonexistent" status
 # {"ok": false, "error": {"code": "DEVICE_NOT_FOUND", "message": "..."}}
 
-# Machine-readable schema
+# Machine-readable schema with types, targeting docs, and error codes
 shelly schema
 ```
+
+Error codes: `DEVICE_NOT_FOUND`, `DEVICE_UNREACHABLE`, `AUTH_REQUIRED`, `NETWORK_ERROR`, `INVALID_INPUT`, `GROUP_NOT_FOUND`, `NO_CACHED_DEVICES`, `PARTIAL_FAILURE`.
 
 ## Groups Configuration
 
@@ -161,9 +206,9 @@ Or manage via CLI: `shelly group add`, `shelly group remove`, `shelly group show
 
 | Generation | Examples | Status |
 |---|---|---|
-| Gen1 | Shelly 1, 1PM, 2.5, Plug S, Dimmer | Supported (switch, power, firmware) |
-| Gen2 | Shelly Plus 1, Plus 1PM, Plus 2PM | Supported (switch, power, firmware) |
-| Gen3 | Shelly Mini 1PM G3, Plus series G3 | Supported (switch, power, firmware) |
+| Gen1 | Shelly 1, 1PM, 2.5, Plug S, Dimmer | Supported (switch, power, firmware, config) |
+| Gen2 | Shelly Plus 1, Plus 1PM, Plus 2PM | Supported (switch, power, firmware, config, schedules, webhooks) |
+| Gen3 | Shelly Mini 1PM G3, Plus series G3 | Supported (switch, power, firmware, config, schedules, webhooks) |
 
 ## License
 
