@@ -93,43 +93,80 @@ pub fn print_device_table(devices: &[DeviceInfo]) {
 pub fn print_status_table_header() {
     let color = use_color();
     let header = format!(
-        " {:<28} {:<5} {:>8} {:>7} {:>5} {:<16} {:>8}",
+        " {:<28} {:<5} {:>8} {:>6} {:<4} {:<16} {:>8}",
         "Name", "State", "Power", "Temp", "WiFi", "IP", "Uptime"
     );
     if color {
         println!("{}", header.bold());
-        println!("{}", "\u{2500}".repeat(84).dimmed());
+        println!("{}", "\u{2500}".repeat(80).dimmed());
     } else {
         println!("{header}");
-        println!("{}", "-".repeat(84));
+        println!("{}", "-".repeat(80));
     }
 }
 
+/// WiFi signal strength as ASCII bars. Returns a fixed 4-char ASCII string
+/// that doesn't use multi-byte Unicode, avoiding column alignment issues.
 fn wifi_bars(rssi: Option<i32>, color: bool) -> String {
     let Some(rssi) = rssi else {
-        return "-".to_string();
+        return "   -".to_string();
     };
     let (bars, level) = if rssi > -50 {
-        ("\u{2588}\u{2588}\u{2588}\u{2588}", 4) // excellent
+        ("^^^^", 4) // excellent
     } else if rssi > -60 {
-        ("\u{2588}\u{2588}\u{2588}\u{2591}", 3) // good
+        ("^^^.", 3) // good
     } else if rssi > -70 {
-        ("\u{2588}\u{2588}\u{2591}\u{2591}", 2) // fair
+        ("^^..", 2) // fair
     } else if rssi > -80 {
-        ("\u{2588}\u{2591}\u{2591}\u{2591}", 1) // weak
+        ("^...", 1) // weak
     } else {
-        ("\u{2591}\u{2591}\u{2591}\u{2591}", 0) // poor
+        ("....", 0) // poor
     };
     if color {
         match level {
-            4 => bars.green().to_string(),
-            3 => bars.green().to_string(),
+            3..=4 => bars.green().to_string(),
             2 => bars.yellow().to_string(),
-            1 => bars.red().to_string(),
             _ => bars.red().to_string(),
         }
     } else {
         bars.to_string()
+    }
+}
+
+struct StatusRow<'a> {
+    name: &'a str,
+    state: &'a str,
+    power: &'a str,
+    temp: &'a str,
+    wifi: &'a str,
+    ip: &'a str,
+    uptime: &'a str,
+}
+
+impl StatusRow<'_> {
+    fn print(&self, color: bool) {
+        if color {
+            let state_str = match self.state {
+                "ON" => "ON".green().to_string(),
+                "OFF" => "OFF".dimmed().to_string(),
+                _ => self.state.dimmed().to_string(),
+            };
+            println!(
+                " {:<28} {:<5} {:>8} {:>6} {:<4} {:<16} {:>8}",
+                self.name.bold(),
+                state_str,
+                self.power,
+                self.temp,
+                self.wifi,
+                self.ip.dimmed(),
+                self.uptime.dimmed(),
+            );
+        } else {
+            println!(
+                " {:<28} {:<5} {:>8} {:>6} {:<4} {:<16} {:>8}",
+                self.name, self.state, self.power, self.temp, self.wifi, self.ip, self.uptime,
+            );
+        }
     }
 }
 
@@ -147,28 +184,33 @@ pub fn print_status_table_row(name: &str, ip: &str, status: &DeviceStatus) {
     let wifi_str = wifi_bars(rssi, color);
 
     if status.switches.is_empty() {
-        let state_str = "-";
-        let power_str = "-".to_string();
-        if color {
-            println!(
-                " {:<28} {:<5} {:>8} {:>7} {:>5} {:<16} {:>8}",
-                name.bold(),
-                state_str.dimmed(),
-                power_str,
-                temp_str,
-                wifi_str,
-                ip.dimmed(),
-                uptime_str.dimmed(),
-            );
-        } else {
-            println!(
-                " {:<28} {:<5} {:>8} {:>7} {:>5} {:<16} {:>8}",
-                name, state_str, power_str, temp_str, wifi_str, ip, uptime_str,
-            );
+        StatusRow {
+            name,
+            state: "-",
+            power: "-",
+            temp: &temp_str,
+            wifi: &wifi_str,
+            ip,
+            uptime: &uptime_str,
         }
+        .print(color);
     } else if status.switches.len() == 1 {
         let sw = &status.switches[0];
-        print_status_table_switch_row(name, ip, sw, &temp_str, &wifi_str, &uptime_str, color);
+        let state = if sw.output { "ON" } else { "OFF" };
+        let power_str = sw
+            .power_watts
+            .map(|w| format!("{w:.1}W"))
+            .unwrap_or_else(|| "-".to_string());
+        StatusRow {
+            name,
+            state,
+            power: &power_str,
+            temp: &temp_str,
+            wifi: &wifi_str,
+            ip,
+            uptime: &uptime_str,
+        }
+        .print(color);
     } else {
         for sw in &status.switches {
             let row_name = format!("{name} [{}]", sw.id);
@@ -176,55 +218,22 @@ pub fn print_status_table_row(name: &str, ip: &str, status: &DeviceStatus) {
                 .temperature_c
                 .map(|t| format!("{t:.0}\u{00b0}C"))
                 .unwrap_or_else(|| temp_str.clone());
-            print_status_table_switch_row(
-                &row_name,
+            let state = if sw.output { "ON" } else { "OFF" };
+            let power_str = sw
+                .power_watts
+                .map(|w| format!("{w:.1}W"))
+                .unwrap_or_else(|| "-".to_string());
+            StatusRow {
+                name: &row_name,
+                state,
+                power: &power_str,
+                temp: &sw_temp,
+                wifi: &wifi_str,
                 ip,
-                sw,
-                &sw_temp,
-                &wifi_str,
-                &uptime_str,
-                color,
-            );
+                uptime: &uptime_str,
+            }
+            .print(color);
         }
-    }
-}
-
-fn print_status_table_switch_row(
-    name: &str,
-    ip: &str,
-    sw: &SwitchStatus,
-    temp_str: &str,
-    wifi_str: &str,
-    uptime_str: &str,
-    color: bool,
-) {
-    let power_str = sw
-        .power_watts
-        .map(|w| format!("{w:.1}W"))
-        .unwrap_or_else(|| "-".to_string());
-
-    if color {
-        let state_str = if sw.output {
-            "ON".green().to_string()
-        } else {
-            "OFF".dimmed().to_string()
-        };
-        println!(
-            " {:<28} {:<5} {:>8} {:>7} {:>5} {:<16} {:>8}",
-            name.bold(),
-            state_str,
-            power_str,
-            temp_str,
-            wifi_str,
-            ip.dimmed(),
-            uptime_str.dimmed(),
-        );
-    } else {
-        let state_str = if sw.output { "ON" } else { "OFF" };
-        println!(
-            " {:<28} {:<5} {:>8} {:>7} {:>5} {:<16} {:>8}",
-            name, state_str, power_str, temp_str, wifi_str, ip, uptime_str,
-        );
     }
 }
 
