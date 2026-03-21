@@ -432,6 +432,8 @@ async fn cmd_status(
         let devices = resolve_all_or_group(cli)?;
 
         let mut results = Vec::new();
+        let mut table_printed_header = false;
+
         for info in &devices {
             warn_if_auth_required(info, password);
             let device = api::create_device(info.clone(), http_client.clone(), password.clone());
@@ -444,8 +446,15 @@ async fn cmd_status(
                             "status": status,
                         }));
                     } else {
-                        output::print_status(info.display_name(), &status);
-                        println!();
+                        if !table_printed_header {
+                            output::print_status_table_header();
+                            table_printed_header = true;
+                        }
+                        output::print_status_table_row(
+                            info.display_name(),
+                            &info.ip.to_string(),
+                            &status,
+                        );
                     }
                 }
                 Err(e) => {
@@ -456,7 +465,15 @@ async fn cmd_status(
                             "error": e.to_string(),
                         }));
                     } else {
-                        eprintln!("{}: {e}", info.display_name());
+                        if !table_printed_header {
+                            output::print_status_table_header();
+                            table_printed_header = true;
+                        }
+                        output::print_status_table_error(
+                            info.display_name(),
+                            &info.ip.to_string(),
+                            &e.to_string(),
+                        );
                     }
                 }
             }

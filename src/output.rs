@@ -90,6 +90,114 @@ pub fn print_device_table(devices: &[DeviceInfo]) {
     }
 }
 
+pub fn print_status_table_header() {
+    let color = use_color();
+    let header = format!(
+        " {:<28} {:<5} {:>8} {:>7} {:<16} {:>8}",
+        "Name", "State", "Power", "Temp", "IP", "Uptime"
+    );
+    if color {
+        println!("{}", header.bold());
+        println!("{}", "\u{2500}".repeat(78).dimmed());
+    } else {
+        println!("{header}");
+        println!("{}", "-".repeat(78));
+    }
+}
+
+pub fn print_status_table_row(name: &str, ip: &str, status: &DeviceStatus) {
+    let color = use_color();
+    let uptime_str = status
+        .uptime
+        .map(format_duration_short)
+        .unwrap_or_else(|| "-".to_string());
+    let temp_str = status
+        .temperature_c
+        .map(|t| format!("{t:.0}\u{00b0}C"))
+        .unwrap_or_else(|| "-".to_string());
+
+    if status.switches.is_empty() {
+        // Device with no switches (unlikely but handle it)
+        let state_str = "-";
+        let power_str = "-".to_string();
+        if color {
+            println!(
+                " {:<28} {:<5} {:>8} {:>7} {:<16} {:>8}",
+                name.bold(),
+                state_str.dimmed(),
+                power_str,
+                temp_str,
+                ip.dimmed(),
+                uptime_str.dimmed(),
+            );
+        } else {
+            println!(
+                " {:<28} {:<5} {:>8} {:>7} {:<16} {:>8}",
+                name, state_str, power_str, temp_str, ip, uptime_str,
+            );
+        }
+    } else if status.switches.len() == 1 {
+        let sw = &status.switches[0];
+        print_status_table_switch_row(name, ip, sw, &temp_str, &uptime_str, color);
+    } else {
+        // Multi-switch: one row per switch
+        for sw in &status.switches {
+            let row_name = format!("{name} [{}]", sw.id);
+            let sw_temp = sw
+                .temperature_c
+                .map(|t| format!("{t:.0}\u{00b0}C"))
+                .unwrap_or_else(|| temp_str.clone());
+            print_status_table_switch_row(&row_name, ip, sw, &sw_temp, &uptime_str, color);
+        }
+    }
+}
+
+fn print_status_table_switch_row(
+    name: &str,
+    ip: &str,
+    sw: &SwitchStatus,
+    temp_str: &str,
+    uptime_str: &str,
+    color: bool,
+) {
+    let power_str = sw
+        .power_watts
+        .map(|w| format!("{w:.1}W"))
+        .unwrap_or_else(|| "-".to_string());
+
+    if color {
+        let state_str = if sw.output {
+            "ON".green().to_string()
+        } else {
+            "OFF".dimmed().to_string()
+        };
+        println!(
+            " {:<28} {:<5} {:>8} {:>7} {:<16} {:>8}",
+            name.bold(),
+            state_str,
+            power_str,
+            temp_str,
+            ip.dimmed(),
+            uptime_str.dimmed(),
+        );
+    } else {
+        let state_str = if sw.output { "ON" } else { "OFF" };
+        println!(
+            " {:<28} {:<5} {:>8} {:>7} {:<16} {:>8}",
+            name, state_str, power_str, temp_str, ip, uptime_str,
+        );
+    }
+}
+
+pub fn print_status_table_error(name: &str, _ip: &str, error: &str) {
+    let color = use_color();
+    if color {
+        println!(" {:<28} {}", name.bold(), error.red());
+    } else {
+        println!(" {:<28} {error}", name);
+    }
+}
+
 pub fn print_status(name: &str, status: &DeviceStatus) {
     println!("Device: {name}");
     if let Some(time) = &status.time {
