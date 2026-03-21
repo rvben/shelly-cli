@@ -19,6 +19,12 @@ pub fn generate_schema() -> Value {
         "switch on",
         "switch off",
         "switch toggle",
+        "rename",
+        "config set",
+        "firmware update",
+        "restore",
+        "group add",
+        "group remove",
     ];
 
     let global_args: Vec<Value> = cmd
@@ -27,20 +33,14 @@ pub fn generate_schema() -> Value {
             let id = a.get_id().as_str();
             id != "help" && id != "version"
         })
-        .map(|a| {
-            json!({
-                "name": format!("--{}", a.get_id()),
-                "required": a.is_required_set(),
-                "description": a.get_help().map(|h| h.to_string()).unwrap_or_default(),
-            })
-        })
+        .map(build_arg_info)
         .collect();
 
     let mut commands = serde_json::Map::new();
 
     for sub in cmd.get_subcommands() {
         let name = sub.get_name();
-        if name == "help" {
+        if name == "help" || name.starts_with('_') {
             continue;
         }
 
@@ -82,6 +82,20 @@ pub fn generate_schema() -> Value {
 
     json!({
         "version": version,
+        "binary": "shelly",
+        "output_format": {
+            "json": "Auto-enabled when piped. Use --json to force. Envelope: {\"ok\": true, \"data\": ...} or {\"ok\": false, \"error\": {\"code\": \"...\", \"message\": \"...\"}}",
+            "error_codes": ["INVALID_INPUT", "DEVICE_NOT_FOUND", "DEVICE_UNREACHABLE", "NETWORK_ERROR", "AUTH_REQUIRED", "GROUP_NOT_FOUND", "NO_CACHED_DEVICES", "PARTIAL_FAILURE"],
+        },
+        "targeting": {
+            "description": "Most commands require a target device. Use global flags to specify.",
+            "flags": {
+                "-n / --name": "Target by device name (from cache)",
+                "--host": "Target by IP address",
+                "-g / --group": "Target a device group",
+                "-a / --all": "Target all cached devices (per-command flag)",
+            },
+        },
         "global_flags": global_args,
         "commands": commands,
     })
@@ -93,12 +107,34 @@ fn build_args(cmd: &clap::Command) -> Vec<Value> {
             let id = a.get_id().as_str();
             id != "help" && id != "version"
         })
-        .map(|a| {
-            json!({
-                "name": format!("--{}", a.get_id()),
-                "required": a.is_required_set(),
-                "description": a.get_help().map(|h| h.to_string()).unwrap_or_default(),
-            })
-        })
+        .map(build_arg_info)
         .collect()
+}
+
+fn build_arg_info(a: &clap::Arg) -> Value {
+    let id = a.get_id().as_str();
+    let takes_value = a.get_action().takes_values();
+
+    // Infer type from the argument name and whether it takes a value
+    let value_type = if !takes_value {
+        "boolean"
+    } else {
+        match id {
+            "id" | "timeout" | "interval" => "integer",
+            _ => "string",
+        }
+    };
+
+    let mut info = json!({
+        "name": format!("--{}", id),
+        "required": a.is_required_set(),
+        "type": value_type,
+        "description": a.get_help().map(|h| h.to_string()).unwrap_or_default(),
+    });
+
+    if let Some(default) = a.get_default_values().first() {
+        info["default"] = json!(default.to_string_lossy());
+    }
+
+    info
 }
