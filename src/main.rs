@@ -136,12 +136,23 @@ async fn run() -> Result<()> {
             Ok(())
         }
         Command::Completions { shell } => {
-            clap_complete::generate(
-                shell,
-                &mut <Cli as clap::CommandFactory>::command(),
-                "shelly",
-                &mut std::io::stdout(),
-            );
+            generate_completions(shell);
+            Ok(())
+        }
+        Command::CompleteDeviceNames => {
+            if let Ok(devices) = cache::load_devices() {
+                for d in &devices {
+                    println!("{}", d.display_name());
+                }
+            }
+            Ok(())
+        }
+        Command::CompleteGroupNames => {
+            if let Ok(groups) = groups::load_groups() {
+                for name in groups.keys() {
+                    println!("{name}");
+                }
+            }
             Ok(())
         }
         // Already handled above
@@ -1400,6 +1411,98 @@ async fn cmd_restore(
 }
 
 /// Convert a device name to a filesystem-safe slug.
+fn generate_completions(shell: clap_complete::Shell) {
+    use std::io::Write;
+
+    // Generate the base completions
+    let mut buf = Vec::new();
+    clap_complete::generate(
+        shell,
+        &mut <Cli as clap::CommandFactory>::command(),
+        "shelly",
+        &mut buf,
+    );
+    let base = String::from_utf8(buf).unwrap();
+
+    match shell {
+        clap_complete::Shell::Zsh => {
+            // Output base completions, then append device/group name completion
+            print!("{base}");
+            print!(
+                r#"
+# Dynamic device name completion for -n/--name
+_shelly_device_names() {{
+    local -a devices
+    devices=(${{(f)"$(shelly _complete-device-names 2>/dev/null)"}})
+    compadd -Q -- "${{devices[@]}}"
+}}
+
+# Dynamic group name completion for -g/--group
+_shelly_group_names() {{
+    local -a groups
+    groups=(${{(f)"$(shelly _complete-group-names 2>/dev/null)"}})
+    compadd -Q -- "${{groups[@]}}"
+}}
+
+# Hook into zsh completion system
+zstyle ':completion:*:shelly:option-(-n|--name)-1:*' completer _shelly_device_names
+zstyle ':completion:*:shelly:option-(-g|--group)-1:*' completer _shelly_group_names
+"#
+            );
+        }
+        clap_complete::Shell::Bash => {
+            print!("{base}");
+            print!(
+                r#"
+# Dynamic device name completion for -n/--name
+_shelly_device_names() {{
+    COMPREPLY=($(compgen -W "$(shelly _complete-device-names 2>/dev/null)" -- "${{COMP_WORDS[$COMP_CWORD]}}"))
+}}
+
+# Dynamic group name completion for -g/--group
+_shelly_group_names() {{
+    COMPREPLY=($(compgen -W "$(shelly _complete-group-names 2>/dev/null)" -- "${{COMP_WORDS[$COMP_CWORD]}}"))
+}}
+
+# Override completion for -n and -g flags
+_shelly_dynamic() {{
+    local prev="${{COMP_WORDS[COMP_CWORD-1]}}"
+    case "$prev" in
+        -n|--name)
+            _shelly_device_names
+            return
+            ;;
+        -g|--group)
+            _shelly_group_names
+            return
+            ;;
+    esac
+    _shelly
+}}
+complete -F _shelly_dynamic -o default shelly
+"#
+            );
+        }
+        clap_complete::Shell::Fish => {
+            print!("{base}");
+            print!(
+                r#"
+# Dynamic device name completion for -n/--name
+complete -c shelly -l name -s n -x -a "(shelly _complete-device-names 2>/dev/null)"
+
+# Dynamic group name completion for -g/--group
+complete -c shelly -l group -s g -x -a "(shelly _complete-group-names 2>/dev/null)"
+"#
+            );
+        }
+        _ => {
+            // PowerShell and others: just output base completions
+            print!("{base}");
+        }
+    }
+    std::io::stdout().flush().unwrap();
+}
+
 fn slug_name(name: &str) -> String {
     name.chars()
         .map(|c| {

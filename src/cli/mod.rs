@@ -194,11 +194,19 @@ pub enum Command {
     #[command(hide = true)]
     Schema,
 
-    /// Generate shell completions
+    /// Generate shell completions (with dynamic device name completion)
     Completions {
         /// Shell to generate completions for
         shell: clap_complete::Shell,
     },
+
+    /// Output cached device names for shell completion
+    #[command(name = "_complete-device-names", hide = true)]
+    CompleteDeviceNames,
+
+    /// Output group names for shell completion
+    #[command(name = "_complete-group-names", hide = true)]
+    CompleteGroupNames,
 }
 
 #[derive(Subcommand, Clone)]
