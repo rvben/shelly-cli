@@ -1,6 +1,6 @@
 [package]
 name = "shelly-cli"
-version = "0.1.6"
+version = "0.1.7"
 edition = "2024"
 description = "CLI for managing and controlling Shelly devices"
 license = "MIT"
