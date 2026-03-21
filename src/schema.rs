@@ -23,6 +23,7 @@ pub fn generate_schema() -> Value {
         "config set",
         "firmware update",
         "restore",
+        "backup",
         "group add",
         "group remove",
     ];
@@ -88,13 +89,20 @@ pub fn generate_schema() -> Value {
             "error_codes": ["INVALID_INPUT", "DEVICE_NOT_FOUND", "DEVICE_UNREACHABLE", "NETWORK_ERROR", "AUTH_REQUIRED", "GROUP_NOT_FOUND", "NO_CACHED_DEVICES", "PARTIAL_FAILURE"],
         },
         "targeting": {
-            "description": "Most commands require a target device. Use global flags to specify.",
+            "description": "Most commands require a target device. Use global flags or positional args to specify.",
             "flags": {
                 "-n / --name": "Target by device name (from cache)",
                 "--host": "Target by IP address",
                 "-g / --group": "Target a device group",
                 "-a / --all": "Target all cached devices (per-command flag)",
             },
+            "positional": "on/off/toggle accept a device name as first positional arg: shelly on \"Kitchen Light\"",
+        },
+        "capabilities": {
+            "description": "Device capabilities vary by generation. Use 'shelly devices' to see generation and num_outputs per device.",
+            "Gen1": ["switch", "power", "energy", "config", "firmware", "backup", "webhooks"],
+            "Gen2": ["switch", "power", "energy", "config", "firmware", "backup", "schedules", "webhooks"],
+            "Gen3": ["switch", "power", "energy", "config", "firmware", "backup", "schedules", "webhooks"],
         },
         "global_flags": global_args,
         "commands": commands,
@@ -102,20 +110,49 @@ pub fn generate_schema() -> Value {
 }
 
 fn build_args(cmd: &clap::Command) -> Vec<Value> {
-    cmd.get_arguments()
+    let positionals: Vec<Value> = cmd.get_positionals().map(build_positional_info).collect();
+
+    let flags: Vec<Value> = cmd
+        .get_arguments()
         .filter(|a| {
             let id = a.get_id().as_str();
-            id != "help" && id != "version"
+            id != "help" && id != "version" && !a.is_positional()
         })
         .map(build_arg_info)
-        .collect()
+        .collect();
+
+    let mut args = positionals;
+    args.extend(flags);
+    args
+}
+
+fn build_positional_info(a: &clap::Arg) -> Value {
+    let id = a.get_id().as_str();
+
+    let value_type = match id {
+        "id" => "integer",
+        _ => "string",
+    };
+
+    let mut info = json!({
+        "name": id,
+        "positional": true,
+        "required": a.is_required_set(),
+        "type": value_type,
+        "description": a.get_help().map(|h| h.to_string()).unwrap_or_default(),
+    });
+
+    if let Some(default) = a.get_default_values().first() {
+        info["default"] = json!(default.to_string_lossy());
+    }
+
+    info
 }
 
 fn build_arg_info(a: &clap::Arg) -> Value {
     let id = a.get_id().as_str();
     let takes_value = a.get_action().takes_values();
 
-    // Infer type from the argument name and whether it takes a value
     let value_type = if !takes_value {
         "boolean"
     } else {

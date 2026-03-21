@@ -14,6 +14,8 @@ use std::io::IsTerminal;
 use std::net::{IpAddr, Ipv4Addr};
 use std::time::Duration;
 
+use futures::future::join_all;
+
 use anyhow::{Context, Result};
 use clap::{CommandFactory, FromArgMatches};
 use owo_colors::OwoColorize;
@@ -431,56 +433,55 @@ async fn cmd_status(
     if all || cli.group.is_some() {
         let devices = resolve_all_or_group(cli)?;
 
-        let mut results = Vec::new();
-        let mut table_printed_header = false;
-
         for info in &devices {
             warn_if_auth_required(info, password);
-            let device = api::create_device(info.clone(), http_client.clone(), password.clone());
-            match device.status().await {
-                Ok(status) => {
-                    if json_output {
-                        results.push(serde_json::json!({
-                            "device": info.display_name(),
-                            "ip": info.ip.to_string(),
-                            "status": status,
-                        }));
-                    } else {
-                        if !table_printed_header {
-                            output::print_status_table_header();
-                            table_printed_header = true;
-                        }
-                        output::print_status_table_row(
-                            info.display_name(),
-                            &info.ip.to_string(),
-                            &status,
-                        );
-                    }
-                }
-                Err(e) => {
-                    if json_output {
-                        results.push(serde_json::json!({
-                            "device": info.display_name(),
-                            "ip": info.ip.to_string(),
-                            "error": e.to_string(),
-                        }));
-                    } else {
-                        if !table_printed_header {
-                            output::print_status_table_header();
-                            table_printed_header = true;
-                        }
-                        output::print_status_table_error(
-                            info.display_name(),
-                            &info.ip.to_string(),
-                            &e.to_string(),
-                        );
-                    }
-                }
-            }
         }
 
+        // Query all devices in parallel
+        let futures: Vec<_> = devices
+            .iter()
+            .map(|info| {
+                let device =
+                    api::create_device(info.clone(), http_client.clone(), password.clone());
+                async move { device.status().await }
+            })
+            .collect();
+        let statuses = join_all(futures).await;
+
         if json_output {
+            let results: Vec<_> = devices
+                .iter()
+                .zip(statuses.iter())
+                .map(|(info, result)| match result {
+                    Ok(status) => serde_json::json!({
+                        "device": info.display_name(),
+                        "ip": info.ip.to_string(),
+                        "status": status,
+                    }),
+                    Err(e) => serde_json::json!({
+                        "device": info.display_name(),
+                        "ip": info.ip.to_string(),
+                        "error": e.to_string(),
+                    }),
+                })
+                .collect();
             output::print_json_success(&results);
+        } else {
+            output::print_status_table_header();
+            for (info, result) in devices.iter().zip(statuses.iter()) {
+                match result {
+                    Ok(status) => output::print_status_table_row(
+                        info.display_name(),
+                        &info.ip.to_string(),
+                        status,
+                    ),
+                    Err(e) => output::print_status_table_error(
+                        info.display_name(),
+                        &info.ip.to_string(),
+                        &e.to_string(),
+                    ),
+                }
+            }
         }
     } else {
         let targets = resolve_and_probe_targets(cli, http_client, password).await?;
@@ -605,17 +606,37 @@ async fn cmd_power(
             }
         }
 
-        let mut results = Vec::new();
         for info in &devices {
             warn_if_auth_required(info, password);
-            let device = api::create_device(info.clone(), http_client.clone(), password.clone());
-            for meter_id in 0..info.num_meters {
+        }
+
+        // Query all devices in parallel (meters within each device are sequential)
+        let futures: Vec<_> = devices
+            .iter()
+            .map(|info| {
+                let device =
+                    api::create_device(info.clone(), http_client.clone(), password.clone());
+                let num_meters = info.num_meters;
+                async move {
+                    let mut readings = Vec::new();
+                    for meter_id in 0..num_meters {
+                        readings.push((meter_id, device.power(meter_id).await));
+                    }
+                    readings
+                }
+            })
+            .collect();
+        let all_readings = join_all(futures).await;
+
+        let mut results = Vec::new();
+        for (info, readings) in devices.iter().zip(all_readings.iter()) {
+            for (meter_id, result) in readings {
                 let label = if info.num_meters > 1 {
                     format!("{} [{}]", info.display_name(), meter_id)
                 } else {
                     info.display_name().to_string()
                 };
-                match device.power(meter_id).await {
+                match result {
                     Ok(reading) => {
                         if json_output {
                             results.push(serde_json::json!({
@@ -625,7 +646,7 @@ async fn cmd_power(
                                 "power": reading,
                             }));
                         } else {
-                            output::print_power_reading(&label, &reading);
+                            output::print_power_reading(&label, reading);
                         }
                     }
                     Err(e) => {
@@ -677,15 +698,42 @@ async fn cmd_energy(
             output::print_energy_header();
         }
 
+        for info in &devices {
+            warn_if_auth_required(info, password);
+        }
+
+        // Query all devices in parallel
+        let futures: Vec<_> = devices
+            .iter()
+            .map(|info| {
+                let device =
+                    api::create_device(info.clone(), http_client.clone(), password.clone());
+                let num_meters = info.num_meters;
+                async move {
+                    let mut total_wh = 0.0;
+                    let mut error: Option<String> = None;
+                    for meter_id in 0..num_meters {
+                        match device.power(meter_id).await {
+                            Ok(reading) => total_wh += reading.total_energy_wh,
+                            Err(e) => {
+                                error = Some(e.to_string());
+                                break;
+                            }
+                        }
+                    }
+                    (num_meters, total_wh, error)
+                }
+            })
+            .collect();
+        let all_energy = join_all(futures).await;
+
         let mut results = Vec::new();
         let mut grand_total_kwh = 0.0;
 
-        for info in &devices {
-            warn_if_auth_required(info, password);
-            let device = api::create_device(info.clone(), http_client.clone(), password.clone());
+        for (info, (num_meters, total_wh, error)) in devices.iter().zip(all_energy.into_iter()) {
             let name = info.display_name().to_string();
 
-            if info.num_meters == 0 {
+            if num_meters == 0 {
                 if json_output {
                     results.push(serde_json::json!({
                         "device": name,
@@ -699,31 +747,18 @@ async fn cmd_energy(
                 continue;
             }
 
-            let mut device_total_wh = 0.0;
-            let mut any_error = false;
-
-            for meter_id in 0..info.num_meters {
-                match device.power(meter_id).await {
-                    Ok(reading) => {
-                        device_total_wh += reading.total_energy_wh;
-                    }
-                    Err(e) => {
-                        any_error = true;
-                        if json_output {
-                            results.push(serde_json::json!({
-                                "device": name,
-                                "ip": info.ip.to_string(),
-                                "error": e.to_string(),
-                            }));
-                        } else {
-                            eprintln!("{:<34} error: {e}", name);
-                        }
-                    }
+            if let Some(e) = error {
+                if json_output {
+                    results.push(serde_json::json!({
+                        "device": name,
+                        "ip": info.ip.to_string(),
+                        "error": e,
+                    }));
+                } else {
+                    eprintln!("{:<34} error: {e}", name);
                 }
-            }
-
-            if !any_error {
-                let kwh = device_total_wh / 1000.0;
+            } else {
+                let kwh = total_wh / 1000.0;
                 grand_total_kwh += kwh;
                 if json_output {
                     results.push(serde_json::json!({

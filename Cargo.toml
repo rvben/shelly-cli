@@ -36,6 +36,7 @@ crossterm = "0.28"
 chrono = "0.4"
 owo-colors = "4"
 netdev = "0.41"
+futures = "0.3"
 
 [profile.release]
 strip = true
