@@ -165,6 +165,64 @@ impl Gen2Device {
         Ok(())
     }
 
+    pub async fn config_set(&self, key: &str, value: &str) -> Result<()> {
+        // Map user-friendly keys to Gen2 RPC config paths
+        let (component, config_key) = match key {
+            "name" => ("sys", "device"),
+            "eco_mode" => ("sys", "device"),
+            "led_status_disable" | "led" => ("sys", "ui"),
+            _ => {
+                anyhow::bail!(
+                    "unknown config key '{key}'. Supported keys: name, eco_mode, led_status_disable"
+                );
+            }
+        };
+
+        let parsed_value: serde_json::Value = match value {
+            "true" => serde_json::Value::Bool(true),
+            "false" => serde_json::Value::Bool(false),
+            v if v.parse::<f64>().is_ok() => {
+                serde_json::Value::Number(serde_json::Number::from_f64(v.parse().unwrap()).unwrap())
+            }
+            v => serde_json::Value::String(v.to_string()),
+        };
+
+        let config = match key {
+            "name" => serde_json::json!({ component: { config_key: { "name": parsed_value } } }),
+            "eco_mode" => {
+                serde_json::json!({ component: { config_key: { "eco_mode": parsed_value } } })
+            }
+            "led_status_disable" | "led" => {
+                // Gen3 Mini uses sys.ui, but not all devices support it
+                serde_json::json!({ component: { config_key: { "led_status_disable": parsed_value } } })
+            }
+            _ => unreachable!(),
+        };
+
+        self.rpc_call(
+            "Sys.SetConfig",
+            Some(serde_json::json!({ "config": config[component] })),
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn schedule_list(&self) -> Result<serde_json::Value> {
+        let resp = self.rpc_call("Schedule.List", None).await?;
+        Ok(resp
+            .get("jobs")
+            .cloned()
+            .unwrap_or(serde_json::Value::Array(vec![])))
+    }
+
+    pub async fn webhook_list(&self) -> Result<serde_json::Value> {
+        let resp = self.rpc_call("Webhook.List", None).await?;
+        Ok(resp
+            .get("hooks")
+            .cloned()
+            .unwrap_or(serde_json::Value::Array(vec![])))
+    }
+
     pub async fn set_name(&self, name: &str) -> Result<()> {
         let params = serde_json::json!({
             "config": { "device": { "name": name } }

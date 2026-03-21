@@ -134,6 +134,18 @@ pub enum Command {
         action: ConfigAction,
     },
 
+    /// View device schedules
+    Schedule {
+        #[command(subcommand)]
+        action: ScheduleAction,
+    },
+
+    /// View device webhooks
+    Webhook {
+        #[command(subcommand)]
+        action: WebhookAction,
+    },
+
     /// Rename a device
     Rename {
         /// New name for the device
@@ -220,7 +232,38 @@ pub enum FirmwareAction {
 #[derive(Subcommand, Clone)]
 pub enum ConfigAction {
     /// Get device configuration
-    Get,
+    Get {
+        /// Get config for all devices
+        #[arg(long, short = 'a')]
+        all: bool,
+    },
+    /// Set a device configuration value (e.g. eco_mode true)
+    Set {
+        /// Configuration key (e.g. eco_mode, name, led_status_disable)
+        key: String,
+        /// Value to set
+        value: String,
+    },
+}
+
+#[derive(Subcommand, Clone)]
+pub enum ScheduleAction {
+    /// List device schedules
+    List {
+        /// List schedules for all devices
+        #[arg(long, short = 'a')]
+        all: bool,
+    },
+}
+
+#[derive(Subcommand, Clone)]
+pub enum WebhookAction {
+    /// List device webhooks
+    List {
+        /// List webhooks for all devices
+        #[arg(long, short = 'a')]
+        all: bool,
+    },
 }
 
 #[derive(Subcommand, Clone)]

@@ -162,6 +162,34 @@ impl Gen1Device {
         Ok(())
     }
 
+    pub async fn config_set(&self, key: &str, value: &str) -> Result<()> {
+        let param = match key {
+            "name" => ("name", value.to_string()),
+            "eco_mode" => ("eco_mode_enabled", value.to_string()),
+            "led_status_disable" => ("led_status_disable", value.to_string()),
+            _ => {
+                anyhow::bail!(
+                    "unknown config key '{key}'. Supported keys: name, eco_mode, led_status_disable"
+                );
+            }
+        };
+        self.get_json(&format!("/settings?{}={}", param.0, param.1))
+            .await?;
+        Ok(())
+    }
+
+    pub async fn schedule_list(&self) -> Result<serde_json::Value> {
+        anyhow::bail!("schedules are not supported on Gen1 devices")
+    }
+
+    pub async fn webhook_list(&self) -> Result<serde_json::Value> {
+        let settings = self.get_json("/settings").await?;
+        Ok(settings
+            .get("actions")
+            .cloned()
+            .unwrap_or(serde_json::json!({})))
+    }
+
     pub async fn set_name(&self, name: &str) -> Result<()> {
         let url = self.url("/settings");
         let mut req = self.client.get(&url).query(&[("name", name)]);

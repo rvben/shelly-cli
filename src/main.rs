@@ -18,7 +18,10 @@ use anyhow::{Context, Result};
 use clap::{CommandFactory, FromArgMatches};
 use owo_colors::OwoColorize;
 
-use cli::{Cli, Command, ConfigAction, FirmwareAction, GroupAction, SwitchAction};
+use cli::{
+    Cli, Command, ConfigAction, FirmwareAction, GroupAction, ScheduleAction, SwitchAction,
+    WebhookAction,
+};
 use model::DeviceInfo;
 
 #[tokio::main]
@@ -97,7 +100,13 @@ async fn run() -> Result<()> {
             cmd_firmware(&cli, &http_client, &password, action.clone(), json_output).await
         }
         Command::Config { ref action } => {
-            cmd_config(&cli, &http_client, &password, action.clone()).await
+            cmd_config(&cli, &http_client, &password, action.clone(), json_output).await
+        }
+        Command::Schedule { ref action } => {
+            cmd_schedule(&cli, &http_client, &password, action.clone(), json_output).await
+        }
+        Command::Webhook { ref action } => {
+            cmd_webhook(&cli, &http_client, &password, action.clone(), json_output).await
         }
         Command::Rename { ref new_name } => {
             cmd_rename(&cli, &http_client, &password, new_name, json_output).await
@@ -803,24 +812,49 @@ async fn cmd_firmware(
                                     "beta": fw.beta_version,
                                 }));
                             } else {
-                                let update_marker = if fw.has_update { " *" } else { "" };
-                                println!(
-                                    "{:<30} {:<16} {:<12} {:<12} {:<20}",
-                                    info.display_name(),
-                                    info.ip,
-                                    output::short_fw(&fw.current_version),
-                                    fw.stable_version
-                                        .as_deref()
-                                        .map(output::short_fw)
-                                        .unwrap_or("-"),
-                                    format!(
-                                        "{}{update_marker}",
-                                        fw.beta_version
-                                            .as_deref()
-                                            .map(output::short_fw)
-                                            .unwrap_or("-")
-                                    ),
-                                );
+                                let current = output::short_fw(&fw.current_version);
+                                let stable_str = fw
+                                    .stable_version
+                                    .as_deref()
+                                    .map(output::short_fw)
+                                    .unwrap_or("-");
+                                let beta_str = fw
+                                    .beta_version
+                                    .as_deref()
+                                    .map(output::short_fw)
+                                    .unwrap_or("-");
+
+                                if output::use_color() {
+                                    if fw.has_update {
+                                        println!(
+                                            "{:<30} {:<16} {:<12} {:<12} {}",
+                                            info.display_name().yellow(),
+                                            info.ip,
+                                            current,
+                                            stable_str.green(),
+                                            beta_str,
+                                        );
+                                    } else {
+                                        println!(
+                                            "{:<30} {:<16} {:<12} {:<12} {}",
+                                            info.display_name(),
+                                            info.ip,
+                                            current.green(),
+                                            stable_str.dimmed(),
+                                            beta_str.dimmed(),
+                                        );
+                                    }
+                                } else {
+                                    let update_marker = if fw.has_update { " *" } else { "" };
+                                    println!(
+                                        "{:<30} {:<16} {:<12} {:<12} {:<20}",
+                                        info.display_name(),
+                                        info.ip,
+                                        current,
+                                        stable_str,
+                                        format!("{beta_str}{update_marker}"),
+                                    );
+                                }
                             }
                         }
                         Err(e) => {
@@ -952,17 +986,244 @@ async fn cmd_config(
     http_client: &reqwest::Client,
     password: &Option<String>,
     action: ConfigAction,
+    json_output: bool,
 ) -> Result<()> {
     match action {
-        ConfigAction::Get => {
+        ConfigAction::Get { all } => {
+            if all || cli.group.is_some() {
+                let devices = resolve_all_or_group(cli)?;
+                let mut results = Vec::new();
+                for info in &devices {
+                    warn_if_auth_required(info, password);
+                    let device =
+                        api::create_device(info.clone(), http_client.clone(), password.clone());
+                    match device.config_get().await {
+                        Ok(config) => {
+                            results.push(serde_json::json!({
+                                "device": info.display_name(),
+                                "ip": info.ip.to_string(),
+                                "config": config,
+                            }));
+                        }
+                        Err(e) => {
+                            results.push(serde_json::json!({
+                                "device": info.display_name(),
+                                "ip": info.ip.to_string(),
+                                "error": e.to_string(),
+                            }));
+                        }
+                    }
+                }
+                output::print_json_success(&results);
+            } else {
+                let targets = resolve_and_probe_targets(cli, http_client, password).await?;
+                let device = &targets[0];
+                let config = device.config_get().await?;
+                output::print_json_success(&config);
+            }
+        }
+        ConfigAction::Set { key, value } => {
             let targets = resolve_and_probe_targets(cli, http_client, password).await?;
             let device = &targets[0];
-            let config = device.config_get().await?;
-            output::print_json_success(&config);
+            device.config_set(&key, &value).await?;
+            if json_output {
+                output::print_json_success(&serde_json::json!({
+                    "device": device.info().display_name(),
+                    "key": key,
+                    "value": value,
+                    "status": "applied",
+                }));
+            } else {
+                println!("{}: set {} = {}", device.info().display_name(), key, value);
+            }
         }
     }
 
     Ok(())
+}
+
+async fn cmd_schedule(
+    cli: &Cli,
+    http_client: &reqwest::Client,
+    password: &Option<String>,
+    action: ScheduleAction,
+    json_output: bool,
+) -> Result<()> {
+    match action {
+        ScheduleAction::List { all } => {
+            if all || cli.group.is_some() {
+                let devices = resolve_all_or_group(cli)?;
+                let mut results = Vec::new();
+                for info in &devices {
+                    warn_if_auth_required(info, password);
+                    let device =
+                        api::create_device(info.clone(), http_client.clone(), password.clone());
+                    match device.schedule_list().await {
+                        Ok(schedules) => {
+                            results.push(serde_json::json!({
+                                "device": info.display_name(),
+                                "ip": info.ip.to_string(),
+                                "schedules": schedules,
+                            }));
+                        }
+                        Err(e) => {
+                            if json_output {
+                                results.push(serde_json::json!({
+                                    "device": info.display_name(),
+                                    "ip": info.ip.to_string(),
+                                    "error": e.to_string(),
+                                }));
+                            } else {
+                                eprintln!("{}: {e}", info.display_name());
+                            }
+                        }
+                    }
+                }
+                if json_output {
+                    output::print_json_success(&results);
+                } else {
+                    for result in &results {
+                        let name = result["device"].as_str().unwrap_or("?");
+                        let schedules = result["schedules"].as_array();
+                        if let Some(scheds) = schedules {
+                            if scheds.is_empty() {
+                                println!("{name}: no schedules");
+                            } else {
+                                println!("{name}: {} schedule(s)", scheds.len());
+                                for s in scheds {
+                                    let id = s.get("id").and_then(|v| v.as_i64()).unwrap_or(-1);
+                                    let enabled =
+                                        s.get("enable").and_then(|v| v.as_bool()).unwrap_or(false);
+                                    let timespec =
+                                        s.get("timespec").and_then(|v| v.as_str()).unwrap_or("?");
+                                    let status = if enabled { "enabled" } else { "disabled" };
+                                    println!("  [{id}] {timespec} ({status})");
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                let targets = resolve_and_probe_targets(cli, http_client, password).await?;
+                let device = &targets[0];
+                let schedules = device.schedule_list().await?;
+                if json_output {
+                    output::print_json_success(&schedules);
+                } else {
+                    let arr = schedules.as_array();
+                    if arr.is_none_or(|a| a.is_empty()) {
+                        println!("{}: no schedules", device.info().display_name());
+                    } else {
+                        for s in arr.unwrap() {
+                            let id = s.get("id").and_then(|v| v.as_i64()).unwrap_or(-1);
+                            let enabled =
+                                s.get("enable").and_then(|v| v.as_bool()).unwrap_or(false);
+                            let timespec =
+                                s.get("timespec").and_then(|v| v.as_str()).unwrap_or("?");
+                            let status = if enabled { "enabled" } else { "disabled" };
+                            println!("  [{id}] {timespec} ({status})");
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn cmd_webhook(
+    cli: &Cli,
+    http_client: &reqwest::Client,
+    password: &Option<String>,
+    action: WebhookAction,
+    json_output: bool,
+) -> Result<()> {
+    match action {
+        WebhookAction::List { all } => {
+            if all || cli.group.is_some() {
+                let devices = resolve_all_or_group(cli)?;
+                let mut results = Vec::new();
+                for info in &devices {
+                    warn_if_auth_required(info, password);
+                    let device =
+                        api::create_device(info.clone(), http_client.clone(), password.clone());
+                    match device.webhook_list().await {
+                        Ok(hooks) => {
+                            results.push(serde_json::json!({
+                                "device": info.display_name(),
+                                "ip": info.ip.to_string(),
+                                "webhooks": hooks,
+                            }));
+                        }
+                        Err(e) => {
+                            if json_output {
+                                results.push(serde_json::json!({
+                                    "device": info.display_name(),
+                                    "ip": info.ip.to_string(),
+                                    "error": e.to_string(),
+                                }));
+                            } else {
+                                eprintln!("{}: {e}", info.display_name());
+                            }
+                        }
+                    }
+                }
+                if json_output {
+                    output::print_json_success(&results);
+                } else {
+                    for result in &results {
+                        let name = result["device"].as_str().unwrap_or("?");
+                        let hooks = result["webhooks"].as_array();
+                        if let Some(hooks) = hooks {
+                            if hooks.is_empty() {
+                                println!("{name}: no webhooks");
+                            } else {
+                                println!("{name}: {} webhook(s)", hooks.len());
+                                for h in hooks {
+                                    print_webhook_entry(h);
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                let targets = resolve_and_probe_targets(cli, http_client, password).await?;
+                let device = &targets[0];
+                let hooks = device.webhook_list().await?;
+                if json_output {
+                    output::print_json_success(&hooks);
+                } else {
+                    let arr = hooks.as_array();
+                    if arr.is_none_or(|a| a.is_empty()) {
+                        println!("{}: no webhooks", device.info().display_name());
+                    } else {
+                        for h in arr.unwrap() {
+                            print_webhook_entry(h);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn print_webhook_entry(h: &serde_json::Value) {
+    // Gen2 format
+    if let Some(id) = h.get("id").and_then(|v| v.as_i64()) {
+        let enabled = h.get("enable").and_then(|v| v.as_bool()).unwrap_or(false);
+        let event = h.get("event").and_then(|v| v.as_str()).unwrap_or("?");
+        let name = h.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+        let status = if enabled { "enabled" } else { "disabled" };
+        println!("  [{id}] {name} on {event} ({status})");
+        if let Some(urls) = h.get("urls").and_then(|v| v.as_array()) {
+            for url in urls {
+                if let Some(u) = url.as_str() {
+                    println!("       -> {u}");
+                }
+            }
+        }
+    }
 }
 
 async fn cmd_reboot(

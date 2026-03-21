@@ -97,6 +97,27 @@ impl ShellyDevice {
         }
     }
 
+    pub async fn config_set(&self, key: &str, value: &str) -> Result<()> {
+        match self {
+            Self::Gen1(d) => d.config_set(key, value).await,
+            Self::Gen2(d) => d.config_set(key, value).await,
+        }
+    }
+
+    pub async fn schedule_list(&self) -> Result<serde_json::Value> {
+        match self {
+            Self::Gen1(d) => d.schedule_list().await,
+            Self::Gen2(d) => d.schedule_list().await,
+        }
+    }
+
+    pub async fn webhook_list(&self) -> Result<serde_json::Value> {
+        match self {
+            Self::Gen1(d) => d.webhook_list().await,
+            Self::Gen2(d) => d.webhook_list().await,
+        }
+    }
+
     pub async fn set_name(&self, name: &str) -> Result<()> {
         match self {
             Self::Gen1(d) => d.set_name(name).await,
