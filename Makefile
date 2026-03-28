@@ -1,4 +1,4 @@
-.PHONY: build release test lint fmt fmt-check clean install
+.PHONY: build release test lint fmt fmt-check clean install release-patch release-minor release-major
 
 build:
 	cargo build
@@ -23,3 +23,12 @@ clean:
 
 install:
 	cargo install --path .
+
+release-patch:
+	vership bump patch
+
+release-minor:
+	vership bump minor
+
+release-major:
+	vership bump major
