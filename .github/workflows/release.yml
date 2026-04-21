@@ -20,6 +20,9 @@ jobs:
 
   build:
     needs: check
+    # Guard: self-hosted runners only execute on trusted events (tag push,
+    # workflow_dispatch). Fork PRs must never dispatch jobs to self-hosted.
+    if: github.event_name != 'pull_request'
     strategy:
       matrix:
         include:
@@ -30,10 +33,10 @@ jobs:
             os: ubuntu-latest
             maturin_args: --compatibility manylinux_2_28 --zig
           - target: x86_64-apple-darwin
-            os: macos-latest
+            os: [self-hosted, macOS, ARM64]
             maturin_args: ""
           - target: aarch64-apple-darwin
-            os: macos-latest
+            os: [self-hosted, macOS, ARM64]
             maturin_args: ""
           - target: x86_64-pc-windows-msvc
             os: windows-latest
