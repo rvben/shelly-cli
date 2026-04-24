@@ -51,12 +51,16 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v6
 
       - name: Install maturin and zig
-        run: pip install maturin ziglang
+        shell: bash
+        run: |
+          uv venv "${RUNNER_TEMP}/build-venv"
+          VENV_BIN="${RUNNER_TEMP}/build-venv/bin"
+          [ -d "$VENV_BIN" ] || VENV_BIN="${RUNNER_TEMP}/build-venv/Scripts"
+          uv pip install --python "$VENV_BIN/python" maturin ziglang
+          echo "$VENV_BIN" >> "$GITHUB_PATH"
 
       - name: Build wheel and binary
         run: maturin build --release --target ${{ matrix.target }} ${{ matrix.maturin_args }}
@@ -93,10 +97,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-      - run: pip install maturin
+      - uses: astral-sh/setup-uv@v6
+      - name: Install maturin
+        shell: bash
+        run: |
+          uv venv "${RUNNER_TEMP}/build-venv"
+          uv pip install --python "${RUNNER_TEMP}/build-venv/bin/python" maturin
+          echo "${RUNNER_TEMP}/build-venv/bin" >> "$GITHUB_PATH"
       - run: maturin sdist
       - uses: actions/upload-artifact@v6
         with:
@@ -144,15 +151,12 @@ jobs:
         with:
           name: sdist
           path: artifacts/sdist
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-      - run: pip install twine
+      - uses: astral-sh/setup-uv@v6
       - name: Publish to PyPI
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
-        run: twine upload artifacts/wheels/**/*.whl artifacts/sdist/*.tar.gz
+        run: uv tool run twine upload artifacts/wheels/**/*.whl artifacts/sdist/*.tar.gz
 
   update-homebrew:
     needs: release
