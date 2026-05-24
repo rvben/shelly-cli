@@ -178,10 +178,22 @@ mod tests {
         assert_eq!(
             comps,
             vec![
-                LightComponent { kind: LightKind::Cct, id: 0 },
-                LightComponent { kind: LightKind::Light, id: 0 },
-                LightComponent { kind: LightKind::Rgb, id: 0 },
-                LightComponent { kind: LightKind::Rgbw, id: 0 },
+                LightComponent {
+                    kind: LightKind::Cct,
+                    id: 0
+                },
+                LightComponent {
+                    kind: LightKind::Light,
+                    id: 0
+                },
+                LightComponent {
+                    kind: LightKind::Rgb,
+                    id: 0
+                },
+                LightComponent {
+                    kind: LightKind::Rgbw,
+                    id: 0
+                },
             ]
         );
     }

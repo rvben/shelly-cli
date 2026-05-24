@@ -1,7 +1,7 @@
 mod api;
 mod cache;
-mod color;
 mod cli;
+mod color;
 mod config;
 mod errors;
 mod groups;
@@ -641,7 +641,10 @@ async fn cmd_light(
                 }
             }
             LightAction::Off { .. } => {
-                let params = model::LightParams { on: Some(false), ..Default::default() };
+                let params = model::LightParams {
+                    on: Some(false),
+                    ..Default::default()
+                };
                 let result = device.light_set(kind, id, &params).await?;
                 if json_output {
                     json_results
@@ -1944,20 +1947,33 @@ mod light_tests {
 
     #[test]
     fn validate_light_id_returns_kind() {
-        let comps = vec![LightComponent { kind: LightKind::Rgb, id: 0 }];
-        assert_eq!(validate_light_id(&comps, 0, "Lamp").unwrap(), LightKind::Rgb);
+        let comps = vec![LightComponent {
+            kind: LightKind::Rgb,
+            id: 0,
+        }];
+        assert_eq!(
+            validate_light_id(&comps, 0, "Lamp").unwrap(),
+            LightKind::Rgb
+        );
     }
 
     #[test]
     fn validate_light_id_no_components_errors() {
-        let err = validate_light_id(&[], 0, "Switch1").unwrap_err().to_string();
+        let err = validate_light_id(&[], 0, "Switch1")
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("no RGB/light outputs"));
     }
 
     #[test]
     fn validate_light_id_out_of_range_errors() {
-        let comps = vec![LightComponent { kind: LightKind::Rgb, id: 0 }];
-        let err = validate_light_id(&comps, 2, "Lamp").unwrap_err().to_string();
+        let comps = vec![LightComponent {
+            kind: LightKind::Rgb,
+            id: 0,
+        }];
+        let err = validate_light_id(&comps, 2, "Lamp")
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("out of range"));
         assert!(err.contains("valid IDs: 0"));
     }
@@ -1981,10 +1997,9 @@ mod light_tests {
 
     #[test]
     fn build_params_rejects_white_on_rgb() {
-        let err =
-            build_light_params(LightKind::Rgb, "Lamp", &None, &None, None, Some(100), None)
-                .unwrap_err()
-                .to_string();
+        let err = build_light_params(LightKind::Rgb, "Lamp", &None, &None, None, Some(100), None)
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("--white is only valid for RGBW"));
     }
 

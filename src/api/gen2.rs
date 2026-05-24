@@ -1,6 +1,9 @@
 use anyhow::{Context, Result};
 
-use crate::model::{DeviceInfo, DeviceStatus, LightComponent, LightKind, LightParams, LightStatus, PowerReading, SwitchStatus};
+use crate::model::{
+    DeviceInfo, DeviceStatus, LightComponent, LightKind, LightParams, LightStatus, PowerReading,
+    SwitchStatus,
+};
 
 use super::{FirmwareInfo, SwitchResult};
 

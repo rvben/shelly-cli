@@ -6,7 +6,10 @@ use std::net::IpAddr;
 
 use anyhow::Result;
 
-use crate::model::{DeviceInfo, DeviceStatus, LightComponent, LightKind, LightParams, LightStatus, PowerReading, SwitchStatus};
+use crate::model::{
+    DeviceInfo, DeviceStatus, LightComponent, LightKind, LightParams, LightStatus, PowerReading,
+    SwitchStatus,
+};
 
 #[derive(Debug, Clone)]
 pub struct SwitchResult {

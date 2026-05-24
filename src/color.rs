@@ -59,8 +59,9 @@ pub fn parse_rgb_triple(spec: &str) -> Result<Rgb> {
         bail!("invalid --rgb '{spec}'. Expected three comma-separated values, e.g. '0,255,136'");
     }
     let parse_one = |p: &str| -> Result<u8> {
-        p.parse::<u8>()
-            .map_err(|_| anyhow::anyhow!("invalid --rgb component '{p}'. Each value must be 0..255"))
+        p.parse::<u8>().map_err(|_| {
+            anyhow::anyhow!("invalid --rgb component '{p}'. Each value must be 0..255")
+        })
     };
     Ok(Rgb {
         r: parse_one(parts[0])?,
@@ -75,8 +76,22 @@ mod tests {
 
     #[test]
     fn hex_with_and_without_hash() {
-        assert_eq!(parse_color("#00ff88").unwrap(), Rgb { r: 0, g: 255, b: 136 });
-        assert_eq!(parse_color("00FF88").unwrap(), Rgb { r: 0, g: 255, b: 136 });
+        assert_eq!(
+            parse_color("#00ff88").unwrap(),
+            Rgb {
+                r: 0,
+                g: 255,
+                b: 136
+            }
+        );
+        assert_eq!(
+            parse_color("00FF88").unwrap(),
+            Rgb {
+                r: 0,
+                g: 255,
+                b: 136
+            }
+        );
     }
 
     #[test]
@@ -94,8 +109,18 @@ mod tests {
 
     #[test]
     fn rgb_triple_parses_and_bounds_check() {
-        assert_eq!(parse_rgb_triple("0,255,136").unwrap(), Rgb { r: 0, g: 255, b: 136 });
-        assert_eq!(parse_rgb_triple(" 1 , 2 , 3 ").unwrap(), Rgb { r: 1, g: 2, b: 3 });
+        assert_eq!(
+            parse_rgb_triple("0,255,136").unwrap(),
+            Rgb {
+                r: 0,
+                g: 255,
+                b: 136
+            }
+        );
+        assert_eq!(
+            parse_rgb_triple(" 1 , 2 , 3 ").unwrap(),
+            Rgb { r: 1, g: 2, b: 3 }
+        );
         assert!(parse_rgb_triple("0,255").is_err());
         assert!(parse_rgb_triple("0,256,0").is_err());
         assert!(parse_rgb_triple("-1,0,0").is_err());
