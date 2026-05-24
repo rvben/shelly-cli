@@ -109,16 +109,16 @@ async fn watch_loop(
                     KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                         return Ok(());
                     }
-                    KeyCode::Up | KeyCode::Char('k')
-                        if selected > 0 => {
-                            selected -= 1;
-                            render(stdout, &snapshots, selected, &status_msg)?;
-                        }
+                    KeyCode::Up | KeyCode::Char('k') if selected > 0 => {
+                        selected -= 1;
+                        render(stdout, &snapshots, selected, &status_msg)?;
+                    }
                     KeyCode::Down | KeyCode::Char('j')
-                        if row_count > 0 && selected < row_count - 1 => {
-                            selected += 1;
-                            render(stdout, &snapshots, selected, &status_msg)?;
-                        }
+                        if row_count > 0 && selected < row_count - 1 =>
+                    {
+                        selected += 1;
+                        render(stdout, &snapshots, selected, &status_msg)?;
+                    }
                     KeyCode::Home => {
                         selected = 0;
                         render(stdout, &snapshots, selected, &status_msg)?;
