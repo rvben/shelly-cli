@@ -172,4 +172,10 @@ Omitted attributes are left unchanged by the device. `set` omits `on`.
 - `src/api/gen2.rs` - `light_components`, `light_set`, `light_status`.
 - `src/api/mod.rs` / `src/api/gen1.rs` - dispatch + Gen1 "not supported" path.
 - `src/output.rs` - `light status` rendering.
-- Tests colocated per existing convention.
+- `src/schema.rs` - register `light on`, `light off`, `light toggle`, and `light set`
+  in the hardcoded `mutating_commands` list (`src/schema.rs:14`), matching how the
+  `switch` actions are marked. Without this, `shelly schema` advertises the new
+  state-changing commands as read-only, breaking the agent-integration contract.
+  `light status` stays non-mutating.
+- Tests colocated per existing convention. Add a `schema` test asserting the new
+  light mutating commands are reported with `is_mutating: true`.
