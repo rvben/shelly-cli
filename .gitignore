@@ -15,3 +15,5 @@ PLAN.md
 
 # macOS
 .DS_Store
+
+.claude/investigations/

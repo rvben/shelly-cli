@@ -8,7 +8,7 @@ A fast CLI for discovering, monitoring, and controlling Shelly smart home device
 
 - Auto-discovery of Shelly devices on the local network (with subnet auto-detection)
 - Unified Gen1 + Gen2/Gen3 support (transparent protocol handling)
-- Multi-switch device support (e.g., Shelly 2.5 with dual relays)
+- Multi-channel device support, per-plug control via `--id` (e.g., Shelly 2.5 dual relays, PowerStrip)
 - Interactive watch dashboard with live power, temperature, WiFi monitoring -- and switch control
 - Energy consumption tracking (total kWh per device)
 - Detailed device info view (model, firmware, uptime, WiFi, temperature)
@@ -76,6 +76,15 @@ shelly on "Kitchen Light"          # Turn on
 shelly off "Kitchen Light"         # Turn off
 shelly toggle -n "Living Room"     # Toggle
 shelly status -n "Kitchen Light"   # Get status
+```
+
+For multi-channel devices (dual relays, power strips), select a specific plug/channel with `--id` (defaults to `0`). The available switch IDs are listed by `shelly info`.
+
+```bash
+shelly info -n "Office Strip"           # Lists Switch 0, Switch 1, ...
+shelly on  -n "Office Strip" --id 1     # Turn on plug 1
+shelly off -n "Office Strip" --id 3     # Turn off plug 3
+shelly switch status -n "Office Strip" --id 2   # Status of plug 2
 ```
 
 ### Monitoring
@@ -208,7 +217,7 @@ Or manage via CLI: `shelly group add`, `shelly group remove`, `shelly group show
 |---|---|---|
 | Gen1 | Shelly 1, 1PM, 2.5, Plug S, Dimmer | Supported (switch, power, firmware, config) |
 | Gen2 | Shelly Plus 1, Plus 1PM, Plus 2PM | Supported (switch, power, firmware, config, schedules, webhooks) |
-| Gen3 | Shelly Mini 1PM G3, Plus series G3 | Supported (switch, power, firmware, config, schedules, webhooks) |
+| Gen3 | Shelly Mini 1PM G3, Plus series G3, PowerStrip 4 (S4PL) | Supported (switch, power, firmware, config, schedules, webhooks) |
 
 ## License
 

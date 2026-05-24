@@ -8,6 +8,7 @@ use clap::{Parser, Subcommand};
 Examples:
   shelly discover --subnet 192.168.1.0/24
   shelly on \"Kitchen Light\"
+  shelly on \"Office Strip\" --id 1
   shelly status -n \"Living Room\"
   shelly power -a
   shelly energy -a
@@ -81,7 +82,7 @@ pub enum Command {
     On {
         /// Device name (positional for convenience)
         device: Option<String>,
-        /// Switch ID (default: 0)
+        /// Switch/plug ID for multi-channel devices (default: 0)
         #[arg(long, default_value = "0")]
         id: u8,
     },
@@ -90,7 +91,7 @@ pub enum Command {
     Off {
         /// Device name (positional for convenience)
         device: Option<String>,
-        /// Switch ID (default: 0)
+        /// Switch/plug ID for multi-channel devices (default: 0)
         #[arg(long, default_value = "0")]
         id: u8,
     },
@@ -99,7 +100,7 @@ pub enum Command {
     Toggle {
         /// Device name (positional for convenience)
         device: Option<String>,
-        /// Switch ID (default: 0)
+        /// Switch/plug ID for multi-channel devices (default: 0)
         #[arg(long, default_value = "0")]
         id: u8,
     },
@@ -213,25 +214,25 @@ pub enum Command {
 pub enum SwitchAction {
     /// Get switch status
     Status {
-        /// Switch ID (default: 0)
+        /// Switch/plug ID for multi-channel devices (default: 0)
         #[arg(long, default_value = "0")]
         id: u8,
     },
     /// Turn switch on
     On {
-        /// Switch ID (default: 0)
+        /// Switch/plug ID for multi-channel devices (default: 0)
         #[arg(long, default_value = "0")]
         id: u8,
     },
     /// Turn switch off
     Off {
-        /// Switch ID (default: 0)
+        /// Switch/plug ID for multi-channel devices (default: 0)
         #[arg(long, default_value = "0")]
         id: u8,
     },
     /// Toggle switch
     Toggle {
-        /// Switch ID (default: 0)
+        /// Switch/plug ID for multi-channel devices (default: 0)
         #[arg(long, default_value = "0")]
         id: u8,
     },
