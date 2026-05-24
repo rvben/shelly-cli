@@ -64,7 +64,7 @@ pub async fn scan_subnet(
         devices.push(info);
     }
 
-    devices.sort_by(|a, b| a.ip.cmp(&b.ip));
+    devices.sort_by_key(|a| a.ip);
     Ok(devices)
 }
 

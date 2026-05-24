@@ -730,7 +730,7 @@ async fn cmd_energy(
         let mut results = Vec::new();
         let mut grand_total_kwh = 0.0;
 
-        for (info, (num_meters, total_wh, error)) in devices.iter().zip(all_energy.into_iter()) {
+        for (info, (num_meters, total_wh, error)) in devices.iter().zip(all_energy) {
             let name = info.display_name().to_string();
 
             if num_meters == 0 {
