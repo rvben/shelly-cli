@@ -66,8 +66,11 @@ shelly light status [--id N]                             # show on/off, color, b
 - `--id` defaults to `0`, validated against detected components (same pattern as
   `validate_switch_id` in `src/main.rs`).
 - `on` and `set` apply all provided attributes atomically within the single `*.Set`
-  call. The difference: `on` forces `on: true`; `set` omits `on` so the device's
-  current power state is preserved.
+  call. The difference: `on` forces `on: true`; `set` preserves the current power
+  state. Because every Set RPC requires "at least one of `on`/`brightness`" (see
+  Confirmed RPC Ranges), `set` includes `on: <current>` read from the same
+  `GetStatus` used for capability detection - this both preserves power and satisfies
+  the requirement even when the user changes only color.
 - `off` and `toggle` take only `--id`.
 - Targeting via the existing global flags (`--host`, `--name`, `--group`) and JSON
   output behavior are inherited unchanged.
@@ -83,9 +86,12 @@ Public surface (names indicative):
 - `parse_rgb_triple(spec: &str) -> Result<Rgb>`: comma-separated `r,g,b`, each `0-255`.
 - `Rgb { r: u8, g: u8, b: u8 }` with `to_array() -> [u8; 3]` for the Shelly `rgb`
   field.
-- Brightness: `0-100` (validated).
-- White: `0-255` (rgbw only) - see Open Questions for range confirmation.
-- Temp: Kelvin integer (cct only), passed as `ct`.
+- Brightness: `--brightness` validated per component kind - `1-100` for `rgb`/`rgbw`,
+  `0-100` for `cct`/`light` (see Confirmed RPC Ranges).
+- White: `--white` `0-255` (rgbw only).
+- Temp: `--temp` Kelvin integer (cct only), passed through as `ct`. Range is
+  device-specific (default e.g. 2700-6500K, configurable); not hardcoded - an
+  out-of-range value surfaces the device's own error.
 
 ### Flag applicability and conflict rules
 
@@ -119,7 +125,16 @@ Add to `Gen2Device`:
 The Gen1 path (`src/api/gen1.rs` via the `ShellyDevice` enum) returns the
 "not yet supported" error for all light operations.
 
-### Example RPC bodies (to confirm against current Shelly docs)
+### Confirmed RPC ranges (from official Shelly Gen2 docs, verified 2026-05-24)
+
+| Method | `rgb` | `white` | `brightness` | other | required |
+|--------|-------|---------|--------------|-------|----------|
+| `RGB.Set`   | `[r,g,b]` each `0..255` | - | `1..100` | - | at least one of `on`/`brightness` |
+| `RGBW.Set`  | `[r,g,b]` each `0..255` | `0..255` | `1..100` | - | at least one of `on`/`brightness` |
+| `CCT.Set`   | - | - | `0..100` | `ct` Kelvin (device range) | at least one of `on`/`brightness`/`ct` |
+| `Light.Set` | - | - | `0..100` | - | at least one of `on`/`brightness` |
+
+### Example RPC bodies
 
 ```
 RGB.Set   { "id": 0, "on": true, "rgb": [0,255,136], "brightness": 80 }
@@ -128,7 +143,9 @@ CCT.Set   { "id": 0, "on": true, "ct": 3000, "brightness": 80 }
 Light.Set { "id": 0, "on": true, "brightness": 80 }
 ```
 
-Omitted attributes are left unchanged by the device. `set` omits `on`.
+Omitted attributes are left unchanged by the device. `on` sends `on: true`; `set`
+sends `on: <current state>` (from the detection `GetStatus`) so it both preserves
+power and satisfies the "at least one of `on`/`brightness`" requirement above.
 
 ## Error handling
 
@@ -148,21 +165,22 @@ Omitted attributes are left unchanged by the device. `set` omits `on`.
   JSON containing `rgb:0`, `rgbw:0`, `cct:0`, `light:0`, and mixtures; assert correct
   `{kind,id}` sets and `--id` validation.
 - **RPC body construction (no hardware):** assert each Set payload matches the
-  documented shape for representative flag combinations, including `set` omitting
-  `on`.
+  documented shape and ranges for representative flag combinations, including `set`
+  carrying `on: <current>` and per-kind brightness bounds (1-100 rgb/rgbw, 0-100
+  cct/light).
 - **Live hardware constraint (honest):** no Gen2/Gen3 RGB device is available in the
   local cache (the Gen3 Mini 1PM is a switch). The `*.Set` round-trip therefore
   cannot be exercised against real hardware in this environment. Logic is covered by
   unit tests; live verification is deferred until RGB hardware is available, and the
   issue reporter (@bricelb) may help validate.
 
-## Open questions to resolve during implementation
+## Open questions
 
-- Confirm value ranges for `RGBW.Set` `white` and the `rgb` array (0-255 vs 0-100)
-  against the current Shelly Gen2 RPC documentation before finalizing param
-  construction.
-- Confirm whether `CCT.Set` expects `ct` in Kelvin and its supported range.
-- Final named-color palette.
+RPC parameter ranges are resolved (see Confirmed RPC Ranges). One minor decision
+remains, safe to settle in implementation:
+
+- Final named-color palette. Proposed: `red, green, blue, white, warm, cyan, magenta,
+  yellow, orange, purple, pink, off` mapping to fixed RGB values, extensible later.
 
 ## Affected / new files
 
