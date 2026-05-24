@@ -1,5 +1,6 @@
 mod api;
 mod cache;
+mod color;
 mod cli;
 mod config;
 mod errors;
@@ -21,8 +22,8 @@ use clap::{CommandFactory, FromArgMatches};
 use owo_colors::OwoColorize;
 
 use cli::{
-    Cli, Command, ConfigAction, FirmwareAction, GroupAction, ScheduleAction, SwitchAction,
-    WebhookAction,
+    Cli, Command, ConfigAction, FirmwareAction, GroupAction, LightAction, ScheduleAction,
+    SwitchAction, WebhookAction,
 };
 use model::DeviceInfo;
 
@@ -91,6 +92,9 @@ async fn run() -> Result<()> {
         }
         Command::Switch { ref action } => {
             cmd_switch(&cli, &http_client, &password, action.clone(), json_output).await
+        }
+        Command::Light { ref action } => {
+            cmd_light(&cli, &http_client, &password, action.clone(), json_output).await
         }
         Command::Power { all, id } => {
             cmd_power(&cli, &http_client, &password, all, id, json_output).await
@@ -581,6 +585,130 @@ async fn cmd_switch(
     Ok(())
 }
 
+async fn cmd_light(
+    cli: &Cli,
+    http_client: &reqwest::Client,
+    password: &Option<String>,
+    action: LightAction,
+    json_output: bool,
+) -> Result<()> {
+    let targets = resolve_and_probe_targets(cli, http_client, password).await?;
+    let mut json_results: Vec<serde_json::Value> = Vec::new();
+
+    for device in &targets {
+        let name = device.info().display_name().to_string();
+        let components = device.light_components().await?;
+
+        let id = match &action {
+            LightAction::Status { id } | LightAction::Off { id } | LightAction::Toggle { id } => {
+                *id
+            }
+            LightAction::On { args } | LightAction::Set { args } => args.id,
+        };
+        let kind = validate_light_id(&components, id, &name)?;
+
+        match &action {
+            LightAction::Status { .. } => {
+                let status = device.light_status(kind, id).await?;
+                if json_output {
+                    json_results.push(serde_json::json!({ "device": name, "status": status }));
+                } else {
+                    if targets.len() > 1 {
+                        print!("{name}: ");
+                    }
+                    output::print_light_status(&status);
+                }
+            }
+            LightAction::On { args } => {
+                let mut params = build_light_params(
+                    kind,
+                    &name,
+                    &args.color,
+                    &args.rgb,
+                    args.brightness,
+                    args.white,
+                    args.temp,
+                )?;
+                params.on = Some(true);
+                let result = device.light_set(kind, id, &params).await?;
+                if json_output {
+                    json_results
+                        .push(serde_json::json!({ "device": name, "was_on": result.was_on }));
+                } else {
+                    let on_label = colored_on_off(true, !json_output);
+                    let was_label = colored_on_off(result.was_on, !json_output);
+                    println!("{name}: Light {id} {on_label} (was {was_label})");
+                }
+            }
+            LightAction::Off { .. } => {
+                let params = model::LightParams { on: Some(false), ..Default::default() };
+                let result = device.light_set(kind, id, &params).await?;
+                if json_output {
+                    json_results
+                        .push(serde_json::json!({ "device": name, "was_on": result.was_on }));
+                } else {
+                    let off_label = colored_on_off(false, !json_output);
+                    let was_label = colored_on_off(result.was_on, !json_output);
+                    println!("{name}: Light {id} {off_label} (was {was_label})");
+                }
+            }
+            LightAction::Toggle { .. } => {
+                let result = device.light_toggle(kind, id).await?;
+                if json_output {
+                    json_results
+                        .push(serde_json::json!({ "device": name, "was_on": result.was_on }));
+                } else {
+                    let was_label = colored_on_off(result.was_on, !json_output);
+                    let toggled = if output::use_color() {
+                        "TOGGLED".cyan().to_string()
+                    } else {
+                        "TOGGLED".to_string()
+                    };
+                    println!("{name}: Light {id} {toggled} (was {was_label})");
+                }
+            }
+            LightAction::Set { args } => {
+                let mut params = build_light_params(
+                    kind,
+                    &name,
+                    &args.color,
+                    &args.rgb,
+                    args.brightness,
+                    args.white,
+                    args.temp,
+                )?;
+                // `on` is set below from the device's current state, so only the
+                // attribute fields are checked here: `set` must change something.
+                if params.rgb.is_none()
+                    && params.brightness.is_none()
+                    && params.white.is_none()
+                    && params.ct.is_none()
+                {
+                    anyhow::bail!(
+                        "light set requires at least one of --color/--rgb, --brightness, --white, --temp"
+                    );
+                }
+                // Read and resend the current power state so `set` never toggles
+                // the light. When only color is changed this `on` value is also
+                // what satisfies the device's "at least one of on/brightness" rule.
+                let current = device.light_status(kind, id).await?;
+                params.on = Some(current.output);
+                let _ = device.light_set(kind, id, &params).await?;
+                if json_output {
+                    json_results.push(serde_json::json!({ "device": name, "id": id }));
+                } else {
+                    println!("{name}: Light {id} updated");
+                }
+            }
+        }
+    }
+
+    if json_output {
+        output::print_json_success(&json_results);
+    }
+    Ok(())
+}
+
 async fn cmd_power(
     cli: &Cli,
     http_client: &reqwest::Client,
@@ -844,6 +972,86 @@ fn validate_meter_id(info: &DeviceInfo, id: u8) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// Validate that a light component ID exists on the device and return its kind.
+///
+/// Assumes a device exposes at most one light-class component kind, which holds
+/// for current Shelly hardware (a device is RGB, or RGBW, or CCT, or a dimmer,
+/// never a mix). The first component matching `id` wins.
+fn validate_light_id(
+    components: &[model::LightComponent],
+    id: u8,
+    device_name: &str,
+) -> Result<model::LightKind> {
+    if let Some(c) = components.iter().find(|c| c.id == id) {
+        return Ok(c.kind);
+    }
+    if components.is_empty() {
+        anyhow::bail!(
+            "{device_name} has no RGB/light outputs. 'light' supports Gen2/Gen3 RGB, RGBW, CCT, and dimmable devices."
+        );
+    }
+    let ids: Vec<String> = components.iter().map(|c| c.id.to_string()).collect();
+    anyhow::bail!(
+        "light ID {id} is out of range for {device_name} (valid IDs: {})",
+        ids.join(", ")
+    );
+}
+
+/// Validate flags against the component kind and build params (color/brightness/
+/// white/temp). The caller sets `on` separately.
+fn build_light_params(
+    kind: model::LightKind,
+    device_name: &str,
+    color: &Option<String>,
+    rgb: &Option<String>,
+    brightness: Option<u8>,
+    white: Option<u8>,
+    temp: Option<u32>,
+) -> Result<model::LightParams> {
+    let mut params = model::LightParams::default();
+
+    if (color.is_some() || rgb.is_some()) && !kind.supports_rgb() {
+        anyhow::bail!(
+            "color is not supported on {device_name}'s {} output; use --brightness{}",
+            kind.as_str(),
+            if kind.supports_ct() { " or --temp" } else { "" }
+        );
+    }
+    if white.is_some() && !kind.supports_white() {
+        anyhow::bail!(
+            "--white is only valid for RGBW lights; {device_name} has a {} output",
+            kind.as_str()
+        );
+    }
+    if temp.is_some() && !kind.supports_ct() {
+        anyhow::bail!(
+            "--temp is only valid for color-temperature (cct) lights; {device_name} has a {} output",
+            kind.as_str()
+        );
+    }
+
+    if let Some(c) = color {
+        params.rgb = Some(color::parse_color(c)?.to_array());
+    } else if let Some(t) = rgb {
+        params.rgb = Some(color::parse_rgb_triple(t)?.to_array());
+    }
+
+    if let Some(b) = brightness {
+        let min = kind.brightness_min();
+        if b < min || b > 100 {
+            anyhow::bail!(
+                "--brightness for {} lights must be {min}-100, got {b}",
+                kind.as_str()
+            );
+        }
+        params.brightness = Some(b);
+    }
+
+    params.white = white;
+    params.ct = temp;
+    Ok(params)
 }
 
 async fn cmd_firmware(
@@ -1726,5 +1934,106 @@ fn cmd_group(action: GroupAction, json_output: bool) -> Result<()> {
             Ok(())
         }
         GroupAction::Show { name } => groups::show_group(&name, json_output),
+    }
+}
+
+#[cfg(test)]
+mod light_tests {
+    use super::*;
+    use model::{LightComponent, LightKind};
+
+    #[test]
+    fn validate_light_id_returns_kind() {
+        let comps = vec![LightComponent { kind: LightKind::Rgb, id: 0 }];
+        assert_eq!(validate_light_id(&comps, 0, "Lamp").unwrap(), LightKind::Rgb);
+    }
+
+    #[test]
+    fn validate_light_id_no_components_errors() {
+        let err = validate_light_id(&[], 0, "Switch1").unwrap_err().to_string();
+        assert!(err.contains("no RGB/light outputs"));
+    }
+
+    #[test]
+    fn validate_light_id_out_of_range_errors() {
+        let comps = vec![LightComponent { kind: LightKind::Rgb, id: 0 }];
+        let err = validate_light_id(&comps, 2, "Lamp").unwrap_err().to_string();
+        assert!(err.contains("out of range"));
+        assert!(err.contains("valid IDs: 0"));
+    }
+
+    #[test]
+    fn build_params_rejects_color_on_cct() {
+        let err = build_light_params(
+            LightKind::Cct,
+            "Bulb",
+            &Some("red".to_string()),
+            &None,
+            None,
+            None,
+            None,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("color is not supported"));
+        assert!(err.contains("--temp"));
+    }
+
+    #[test]
+    fn build_params_rejects_white_on_rgb() {
+        let err =
+            build_light_params(LightKind::Rgb, "Lamp", &None, &None, None, Some(100), None)
+                .unwrap_err()
+                .to_string();
+        assert!(err.contains("--white is only valid for RGBW"));
+    }
+
+    #[test]
+    fn build_params_rejects_temp_on_rgb() {
+        let err = build_light_params(LightKind::Rgb, "Lamp", &None, &None, None, None, Some(3000))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("--temp is only valid"));
+    }
+
+    #[test]
+    fn build_params_rejects_brightness_zero_on_rgb() {
+        let err = build_light_params(LightKind::Rgb, "Lamp", &None, &None, Some(0), None, None)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("must be 1-100"));
+    }
+
+    #[test]
+    fn build_params_allows_brightness_zero_on_cct() {
+        let params =
+            build_light_params(LightKind::Cct, "Bulb", &None, &None, Some(0), None, None).unwrap();
+        assert_eq!(params.brightness, Some(0));
+    }
+
+    #[test]
+    fn build_params_rejects_brightness_over_100() {
+        let err = build_light_params(LightKind::Cct, "Bulb", &None, &None, Some(101), None, None)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("must be 0-100"));
+    }
+
+    #[test]
+    fn build_params_builds_rgb_and_brightness() {
+        let params = build_light_params(
+            LightKind::Rgb,
+            "Lamp",
+            &Some("#00ff88".to_string()),
+            &None,
+            Some(80),
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(params.rgb, Some([0, 255, 136]));
+        assert_eq!(params.brightness, Some(80));
+        assert_eq!(params.white, None);
+        assert_eq!(params.ct, None);
     }
 }

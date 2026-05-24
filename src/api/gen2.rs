@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 
-use crate::model::{DeviceInfo, DeviceStatus, PowerReading, SwitchStatus};
+use crate::model::{DeviceInfo, DeviceStatus, LightComponent, LightKind, LightParams, LightStatus, PowerReading, SwitchStatus};
 
 use super::{FirmwareInfo, SwitchResult};
 
@@ -94,6 +94,47 @@ impl Gen2Device {
             .unwrap_or(false);
 
         Ok(SwitchResult { was_on })
+    }
+
+    pub async fn light_components(&self) -> Result<Vec<LightComponent>> {
+        let status = self.rpc_call("Shelly.GetStatus", None).await?;
+        Ok(LightComponent::from_status(&status))
+    }
+
+    pub async fn light_set(
+        &self,
+        kind: LightKind,
+        id: u8,
+        params: &LightParams,
+    ) -> Result<SwitchResult> {
+        let body = build_set_body(kind, id, params);
+        let method = format!("{}.Set", kind.rpc_namespace());
+        let resp = self.rpc_call(&method, Some(body)).await?;
+        let was_on = resp
+            .get("was_on")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        Ok(SwitchResult { was_on })
+    }
+
+    pub async fn light_toggle(&self, kind: LightKind, id: u8) -> Result<SwitchResult> {
+        let method = format!("{}.Toggle", kind.rpc_namespace());
+        let resp = self
+            .rpc_call(&method, Some(serde_json::json!({ "id": id })))
+            .await?;
+        let was_on = resp
+            .get("was_on")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        Ok(SwitchResult { was_on })
+    }
+
+    pub async fn light_status(&self, kind: LightKind, id: u8) -> Result<LightStatus> {
+        let method = format!("{}.GetStatus", kind.rpc_namespace());
+        let resp = self
+            .rpc_call(&method, Some(serde_json::json!({ "id": id })))
+            .await?;
+        Ok(LightStatus::from_component_json(kind, id, &resp))
     }
 
     pub async fn power(&self, id: u8) -> Result<PowerReading> {
@@ -292,5 +333,108 @@ impl Gen2Device {
         });
         self.rpc_call("Sys.SetConfig", Some(params)).await?;
         Ok(())
+    }
+}
+
+/// Build the JSON body for a `<Kind>.Set` call from light params. Only the
+/// fields relevant to the component kind and present in `params` are included.
+/// Always includes `id`.
+fn build_set_body(kind: LightKind, id: u8, params: &LightParams) -> serde_json::Value {
+    let mut body = serde_json::Map::new();
+    body.insert("id".to_string(), serde_json::json!(id));
+    if let Some(on) = params.on {
+        body.insert("on".to_string(), serde_json::json!(on));
+    }
+    if let Some(b) = params.brightness {
+        body.insert("brightness".to_string(), serde_json::json!(b));
+    }
+    if kind.supports_rgb()
+        && let Some(rgb) = params.rgb
+    {
+        body.insert("rgb".to_string(), serde_json::json!(rgb));
+    }
+    if kind.supports_white()
+        && let Some(w) = params.white
+    {
+        body.insert("white".to_string(), serde_json::json!(w));
+    }
+    if kind.supports_ct()
+        && let Some(ct) = params.ct
+    {
+        body.insert("ct".to_string(), serde_json::json!(ct));
+    }
+    serde_json::Value::Object(body)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{LightKind, LightParams};
+
+    #[test]
+    fn rgb_set_body_includes_color_and_brightness() {
+        let params = LightParams {
+            on: Some(true),
+            rgb: Some([0, 255, 136]),
+            brightness: Some(80),
+            ..Default::default()
+        };
+        let body = build_set_body(LightKind::Rgb, 0, &params);
+        assert_eq!(
+            body,
+            serde_json::json!({ "id": 0, "on": true, "brightness": 80, "rgb": [0, 255, 136] })
+        );
+    }
+
+    #[test]
+    fn rgb_body_omits_white_and_ct() {
+        let params = LightParams {
+            on: Some(true),
+            rgb: Some([1, 2, 3]),
+            white: Some(50),
+            ct: Some(3000),
+            ..Default::default()
+        };
+        let body = build_set_body(LightKind::Rgb, 0, &params);
+        assert!(body.get("white").is_none());
+        assert!(body.get("ct").is_none());
+    }
+
+    #[test]
+    fn rgbw_body_includes_white() {
+        let params = LightParams {
+            on: Some(true),
+            rgb: Some([1, 2, 3]),
+            white: Some(255),
+            ..Default::default()
+        };
+        let body = build_set_body(LightKind::Rgbw, 1, &params);
+        assert_eq!(body.get("white"), Some(&serde_json::json!(255)));
+        assert_eq!(body.get("id"), Some(&serde_json::json!(1)));
+    }
+
+    #[test]
+    fn cct_body_includes_ct_not_rgb() {
+        let params = LightParams {
+            on: Some(false),
+            ct: Some(3000),
+            rgb: Some([1, 2, 3]),
+            ..Default::default()
+        };
+        let body = build_set_body(LightKind::Cct, 0, &params);
+        assert_eq!(body.get("ct"), Some(&serde_json::json!(3000)));
+        assert!(body.get("rgb").is_none());
+    }
+
+    #[test]
+    fn set_preserving_power_carries_current_on() {
+        let params = LightParams {
+            on: Some(true),
+            brightness: Some(40),
+            ..Default::default()
+        };
+        let body = build_set_body(LightKind::Light, 0, &params);
+        assert_eq!(body.get("on"), Some(&serde_json::json!(true)));
+        assert_eq!(body.get("brightness"), Some(&serde_json::json!(40)));
     }
 }

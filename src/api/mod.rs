@@ -6,7 +6,7 @@ use std::net::IpAddr;
 
 use anyhow::Result;
 
-use crate::model::{DeviceInfo, DeviceStatus, PowerReading, SwitchStatus};
+use crate::model::{DeviceInfo, DeviceStatus, LightComponent, LightKind, LightParams, LightStatus, PowerReading, SwitchStatus};
 
 #[derive(Debug, Clone)]
 pub struct SwitchResult {
@@ -59,6 +59,47 @@ impl ShellyDevice {
         match self {
             Self::Gen1(d) => d.switch_toggle(id).await,
             Self::Gen2(d) => d.switch_toggle(id).await,
+        }
+    }
+
+    pub async fn light_components(&self) -> Result<Vec<LightComponent>> {
+        match self {
+            Self::Gen1(_) => {
+                anyhow::bail!("light control for Gen1 devices is not yet implemented (planned)")
+            }
+            Self::Gen2(d) => d.light_components().await,
+        }
+    }
+
+    pub async fn light_set(
+        &self,
+        kind: LightKind,
+        id: u8,
+        params: &LightParams,
+    ) -> Result<SwitchResult> {
+        match self {
+            Self::Gen1(_) => {
+                anyhow::bail!("light control for Gen1 devices is not yet implemented (planned)")
+            }
+            Self::Gen2(d) => d.light_set(kind, id, params).await,
+        }
+    }
+
+    pub async fn light_toggle(&self, kind: LightKind, id: u8) -> Result<SwitchResult> {
+        match self {
+            Self::Gen1(_) => {
+                anyhow::bail!("light control for Gen1 devices is not yet implemented (planned)")
+            }
+            Self::Gen2(d) => d.light_toggle(kind, id).await,
+        }
+    }
+
+    pub async fn light_status(&self, kind: LightKind, id: u8) -> Result<LightStatus> {
+        match self {
+            Self::Gen1(_) => {
+                anyhow::bail!("light control for Gen1 devices is not yet implemented (planned)")
+            }
+            Self::Gen2(d) => d.light_status(kind, id).await,
         }
     }
 

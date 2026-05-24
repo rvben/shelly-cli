@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(
@@ -76,6 +76,12 @@ pub enum Command {
     Switch {
         #[command(subcommand)]
         action: SwitchAction,
+    },
+
+    /// Control RGB / RGBW / CCT / dimmable light outputs (Gen2/Gen3)
+    Light {
+        #[command(subcommand)]
+        action: LightAction,
     },
 
     /// Turn device(s) on
@@ -235,6 +241,61 @@ pub enum SwitchAction {
         /// Switch/plug ID for multi-channel devices (default: 0)
         #[arg(long, default_value = "0")]
         id: u8,
+    },
+}
+
+/// Color/brightness attributes shared by `light on` and `light set`.
+#[derive(Args, Clone)]
+pub struct LightSetArgs {
+    /// Light component ID (default: 0)
+    #[arg(long, default_value = "0")]
+    pub id: u8,
+    /// Color as hex (#00ff88) or name (red, green, warm, ...)
+    #[arg(long, conflicts_with = "rgb")]
+    pub color: Option<String>,
+    /// Color as comma-separated r,g,b (each 0-255), e.g. 0,255,136
+    #[arg(long)]
+    pub rgb: Option<String>,
+    /// Brightness 1-100 (RGB/RGBW) or 0-100 (CCT/dimmable)
+    #[arg(long)]
+    pub brightness: Option<u8>,
+    /// White channel 0-255 (RGBW only)
+    #[arg(long)]
+    pub white: Option<u8>,
+    /// Color temperature in Kelvin (CCT only)
+    #[arg(long)]
+    pub temp: Option<u32>,
+}
+
+#[derive(Subcommand, Clone)]
+pub enum LightAction {
+    /// Show light status (on/off, color, brightness)
+    Status {
+        /// Light component ID (default: 0)
+        #[arg(long, default_value = "0")]
+        id: u8,
+    },
+    /// Turn light on, optionally setting color/brightness/white/temp
+    On {
+        #[command(flatten)]
+        args: LightSetArgs,
+    },
+    /// Turn light off
+    Off {
+        /// Light component ID (default: 0)
+        #[arg(long, default_value = "0")]
+        id: u8,
+    },
+    /// Toggle light on/off
+    Toggle {
+        /// Light component ID (default: 0)
+        #[arg(long, default_value = "0")]
+        id: u8,
+    },
+    /// Change attributes without changing power state
+    Set {
+        #[command(flatten)]
+        args: LightSetArgs,
     },
 }
 

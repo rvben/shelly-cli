@@ -317,6 +317,30 @@ pub fn print_switch_status(sw: &SwitchStatus) {
     }
 }
 
+pub fn print_light_status(s: &crate::model::LightStatus) {
+    let color = use_color();
+    let state = if s.output {
+        if color { "ON".green().to_string() } else { "ON".to_string() }
+    } else if color {
+        "OFF".dimmed().to_string()
+    } else {
+        "OFF".to_string()
+    };
+    println!("  Light {} ({}): {state}", s.id, s.kind);
+    if let Some([r, g, b]) = s.rgb {
+        println!("    Color: #{r:02x}{g:02x}{b:02x} (rgb {r},{g},{b})");
+    }
+    if let Some(w) = s.white {
+        println!("    White: {w}");
+    }
+    if let Some(ct) = s.ct {
+        println!("    Temp: {ct:.0}K");
+    }
+    if let Some(br) = s.brightness {
+        println!("    Brightness: {br:.0}%");
+    }
+}
+
 pub fn print_power_reading(name: &str, reading: &PowerReading) {
     println!(
         "{:<30} {:>8.1}W {:>7.1}V {:>8.3}A {:>10.2} kWh",
