@@ -19,6 +19,10 @@ pub fn generate_schema() -> Value {
         "switch on",
         "switch off",
         "switch toggle",
+        "light on",
+        "light off",
+        "light toggle",
+        "light set",
         "rename",
         "config set",
         "firmware update",
@@ -174,4 +178,27 @@ fn build_arg_info(a: &clap::Arg) -> Value {
     }
 
     info
+}
+
+#[cfg(test)]
+mod tests {
+    use super::generate_schema;
+
+    #[test]
+    fn light_mutating_commands_are_marked() {
+        let schema = generate_schema();
+        let cmds = &schema["commands"];
+        for name in ["light on", "light off", "light toggle", "light set"] {
+            assert_eq!(
+                cmds[name]["mutating"],
+                serde_json::json!(true),
+                "{name} should be mutating"
+            );
+        }
+        assert_eq!(
+            cmds["light status"]["mutating"],
+            serde_json::json!(false),
+            "light status should be read-only"
+        );
+    }
 }
