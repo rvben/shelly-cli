@@ -165,14 +165,14 @@ jobs:
     needs: release
     runs-on: ubuntu-latest
     env:
-      HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+      HOMEBREW_TAP_DEPLOY_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
     steps:
-      - name: Check for tap token
+      - name: Check for tap deploy key
         id: check-token
         run: |
-          if [ -z "$HOMEBREW_TAP_TOKEN" ]; then
+          if [ -z "$HOMEBREW_TAP_DEPLOY_KEY" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "HOMEBREW_TAP_TOKEN not set, skipping Homebrew formula update"
+            echo "HOMEBREW_TAP_DEPLOY_KEY not set, skipping Homebrew formula update"
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
@@ -196,7 +196,15 @@ jobs:
           TAG="${{ github.ref_name }}"
           VERSION="${TAG#v}"
 
-          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/rvben/homebrew-tap.git" homebrew-tap
+          # Authenticate to the tap with a write deploy key scoped to
+          # rvben/homebrew-tap. The key does not expire, so cross-repo pushes
+          # keep working without periodic token rotation.
+          mkdir -p ~/.ssh
+          echo "$HOMEBREW_TAP_DEPLOY_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
+
+          git clone git@github.com:rvben/homebrew-tap.git homebrew-tap
           cd homebrew-tap
 
           cat > Formula/shelly-cli.rb << 'FORMULA'
