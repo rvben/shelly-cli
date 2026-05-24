@@ -8,6 +8,7 @@ A fast CLI for discovering, monitoring, and controlling Shelly smart home device
 
 - Auto-discovery of Shelly devices on the local network (with subnet auto-detection)
 - Unified Gen1 + Gen2/Gen3 support (transparent protocol handling)
+- RGB / RGBW / CCT / dimmable light control (`shelly light`, Gen2/Gen3)
 - Multi-channel device support, per-plug control via `--id` (e.g., Shelly 2.5 dual relays, PowerStrip)
 - Interactive watch dashboard with live power, temperature, WiFi monitoring -- and switch control
 - Energy consumption tracking (total kWh per device)
@@ -86,6 +87,22 @@ shelly on  -n "Office Strip" --id 1     # Turn on plug 1
 shelly off -n "Office Strip" --id 3     # Turn off plug 3
 shelly switch status -n "Office Strip" --id 2   # Status of plug 2
 ```
+
+### Light control (Gen2/Gen3 RGB / RGBW / CCT / dimmable)
+
+```bash
+shelly light on  -n "Desk Lamp" --color '#00ff88'        # RGB color (hex)
+shelly light on  -n "Desk Lamp" --color warm             # named color
+shelly light on  -n "Desk Lamp" --rgb 0,255,136 --brightness 80
+shelly light set -n "Desk Lamp" --brightness 40          # change brightness, keep power state
+shelly light on  -n "Strip" --rgb 255,0,0 --white 0      # RGBW: color + white channel
+shelly light on  -n "Bulb" --temp 3000 --brightness 60   # CCT: color temperature (Kelvin)
+shelly light off -n "Desk Lamp"
+shelly light toggle -n "Desk Lamp"
+shelly light status -n "Desk Lamp"
+```
+
+`--id` selects the component on multi-light devices (default `0`). Brightness is 1-100 for RGB/RGBW and 0-100 for CCT/dimmable. `--color` accepts hex (`#rrggbb`) or a name (red, green, blue, white, warm, cyan, magenta, yellow, orange, purple, pink, off); `--rgb` takes `r,g,b` each 0-255.
 
 ### Monitoring
 
