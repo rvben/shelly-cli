@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+
+## [0.1.12](https://github.com/rvben/shelly-cli/compare/v0.1.11...v0.1.12) - 2026-06-11
+
+### Added
+
+- make shelly CLI fully compliant with The CLI Spec v0.2 ([478bec8](https://github.com/rvben/shelly-cli/commit/478bec8953be26bd914dce0b4c70165cd0329a7b))
+
 ## [0.1.11](https://github.com/rvben/shelly-cli/compare/v0.1.10...v0.1.11) - 2026-05-24
 
 ### Added
