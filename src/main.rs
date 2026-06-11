@@ -22,28 +22,77 @@ use clap::{CommandFactory, FromArgMatches};
 use owo_colors::OwoColorize;
 
 use cli::{
-    Cli, Command, ConfigAction, FirmwareAction, GroupAction, LightAction, ScheduleAction,
+    Cli, Command, ConfigAction, FirmwareAction, GroupAction, LightAction, ListArgs, ScheduleAction,
     SwitchAction, WebhookAction,
 };
 use model::DeviceInfo;
+use output::OutputFormat;
 
 #[tokio::main]
 async fn main() {
     if let Err(err) = run().await {
         let cli_error = errors::classify_error(&err);
-        let exit_code = cli_error.code.exit_code();
+        let exit_code = cli_error.exit_code;
 
-        let json_mode = std::env::args().any(|a| a == "--json" || a == "-j")
-            || !std::io::stdout().is_terminal();
+        // Resolve output format from raw args since Cli may not have parsed yet.
+        let json_mode = resolve_json_mode_from_args();
 
         if json_mode {
             output::print_json_error(&cli_error);
         } else {
             eprintln!("Error: {}", cli_error.message);
+            if let Some(ref hint) = cli_error.hint {
+                eprintln!("Hint: {hint}");
+            }
         }
 
         std::process::exit(exit_code);
     }
+}
+
+/// Strip ANSI escape sequences from a string for plain-text error messages.
+fn strip_ansi(s: &str) -> String {
+    // Matches ESC[ ... m and similar CSI sequences.
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' && chars.peek() == Some(&'[') {
+            // Consume ESC[
+            chars.next();
+            // Consume until a letter (the command character)
+            for ch in chars.by_ref() {
+                if ch.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// Determine whether to emit JSON errors from raw argv, before clap runs.
+fn resolve_json_mode_from_args() -> bool {
+    let args: Vec<String> = std::env::args().collect();
+
+    // --json or -j flags always mean JSON mode
+    if args.iter().any(|a| a == "--json" || a == "-j") {
+        return true;
+    }
+
+    // --output json or -o json means JSON mode
+    for window in args.windows(2) {
+        if (window[0] == "--output" || window[0] == "-o") && window[1] == "json" {
+            return true;
+        }
+    }
+    if args.iter().any(|a| a == "--output=json" || a == "-o=json") {
+        return true;
+    }
+
+    // Default: auto-detect by TTY
+    !std::io::stdout().is_terminal()
 }
 
 async fn run() -> Result<()> {
@@ -59,10 +108,40 @@ async fn run() -> Result<()> {
         Box::leak(name.into_boxed_str())
     };
 
-    let matches = Cli::command().name(bin_name).get_matches();
+    // Use try_get_matches so clap parse errors are returned as anyhow::Error
+    // rather than printed directly, letting our structured error handler emit JSON.
+    let matches = Cli::command()
+        .name(bin_name)
+        .try_get_matches()
+        .map_err(|e| {
+            // Help and version requests are normal exits, not errors.
+            // Let clap handle them as intended.
+            if e.kind() == clap::error::ErrorKind::DisplayHelp
+                || e.kind() == clap::error::ErrorKind::DisplayVersion
+                || e.kind() == clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+            {
+                let _ = e.print();
+                std::process::exit(0);
+            }
+            // Strip ANSI escape codes so the message is plain text.
+            let rendered = e.render().to_string();
+            let plain = strip_ansi(&rendered);
+            // Embed a sentinel prefix so classify_error recognises clap errors.
+            anyhow::anyhow!("clap_error: {plain}")
+        })?;
     let mut cli = Cli::from_arg_matches(&matches)?;
 
-    let json_output = cli.json || !std::io::stdout().is_terminal();
+    // Resolve three-valued format: --json (hidden alias) overrides --output; auto detects TTY.
+    let format = if cli.json {
+        OutputFormat::Json
+    } else {
+        match cli.output.as_str() {
+            "json" => OutputFormat::Json,
+            "text" => OutputFormat::Text,
+            _ => OutputFormat::Auto,
+        }
+    };
+    let json_output = format.is_json();
     let timeout = Duration::from_millis(cli.timeout);
 
     let app_config = config::load_config()?;
@@ -86,9 +165,19 @@ async fn run() -> Result<()> {
 
     match cli.command {
         Command::Discover { subnet } => cmd_discover(subnet, timeout, json_output, cli.quiet).await,
-        Command::Devices { refresh } => cmd_devices(refresh, timeout, json_output, cli.quiet).await,
-        Command::Status { all } => {
-            cmd_status(&cli, &http_client, &password, all, json_output).await
+        Command::Devices { refresh, list } => {
+            cmd_devices(refresh, timeout, json_output, cli.quiet, list).await
+        }
+        Command::Status { all, ref list } => {
+            cmd_status(
+                &cli,
+                &http_client,
+                &password,
+                all,
+                list.clone(),
+                json_output,
+            )
+            .await
         }
         Command::Switch { ref action } => {
             cmd_switch(&cli, &http_client, &password, action.clone(), json_output).await
@@ -114,24 +203,18 @@ async fn run() -> Result<()> {
         Command::Webhook { ref action } => {
             cmd_webhook(&cli, &http_client, &password, action.clone(), json_output).await
         }
-        Command::Backup { all, ref output } => {
-            cmd_backup(
-                &cli,
-                &http_client,
-                &password,
-                all,
-                output.clone(),
-                json_output,
-            )
-            .await
+        Command::Backup { all, ref dir } => {
+            cmd_backup(&cli, &http_client, &password, all, dir.clone(), json_output).await
         }
-        Command::Restore { ref file } => {
-            cmd_restore(&cli, &http_client, &password, file, json_output).await
+        Command::Restore { ref file, yes } => {
+            cmd_restore(&cli, &http_client, &password, file, yes, json_output).await
         }
-        Command::Rename { ref new_name } => {
-            cmd_rename(&cli, &http_client, &password, new_name, json_output).await
+        Command::Rename { ref new_name, yes } => {
+            cmd_rename(&cli, &http_client, &password, new_name, yes, json_output).await
         }
-        Command::Reboot => cmd_reboot(&cli, &http_client, &password, json_output).await,
+        Command::Reboot { yes } => {
+            cmd_reboot(&cli, &http_client, &password, yes, json_output).await
+        }
         Command::Watch { interval } => cmd_watch(&cli, &http_client, &password, interval).await,
         Command::Info => cmd_info(&cli, &http_client, &password, json_output).await,
         Command::Health => cmd_health(&cli, &http_client, &password, json_output).await,
@@ -401,11 +484,42 @@ async fn cmd_discover(
     Ok(())
 }
 
+/// Apply limit/offset pagination and optional field filtering to a JSON array.
+fn paginate(
+    items: Vec<serde_json::Value>,
+    limit: usize,
+    offset: usize,
+    fields: &Option<String>,
+) -> Vec<serde_json::Value> {
+    let field_list: Option<Vec<&str>> = fields
+        .as_deref()
+        .map(|f| f.split(',').map(str::trim).collect());
+
+    items
+        .into_iter()
+        .skip(offset)
+        .take(limit)
+        .map(|item| {
+            if let (Some(fl), Some(obj)) = (&field_list, item.as_object()) {
+                let filtered: serde_json::Map<_, _> = obj
+                    .iter()
+                    .filter(|(k, _)| fl.contains(&k.as_str()))
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect();
+                serde_json::Value::Object(filtered)
+            } else {
+                item
+            }
+        })
+        .collect()
+}
+
 async fn cmd_devices(
     refresh: bool,
     timeout: Duration,
     json_output: bool,
     quiet: bool,
+    list: ListArgs,
 ) -> Result<()> {
     if refresh {
         return cmd_discover(None, timeout, json_output, quiet).await;
@@ -419,7 +533,18 @@ async fn cmd_devices(
     }
 
     if json_output {
-        output::print_json_success(&devices);
+        let all_items: Vec<serde_json::Value> = devices
+            .iter()
+            .map(|d| serde_json::to_value(d).unwrap_or_default())
+            .collect();
+        let total = all_items.len();
+        let page = paginate(all_items, list.limit, list.offset, &list.fields);
+        output::print_json_success(&serde_json::json!({
+            "items": page,
+            "total": total,
+            "limit": list.limit,
+            "offset": list.offset,
+        }));
     } else {
         output::print_device_table(&devices);
     }
@@ -432,6 +557,7 @@ async fn cmd_status(
     http_client: &reqwest::Client,
     password: &Option<String>,
     all: bool,
+    list: ListArgs,
     json_output: bool,
 ) -> Result<()> {
     if all || cli.group.is_some() {
@@ -453,7 +579,7 @@ async fn cmd_status(
         let statuses = join_all(futures).await;
 
         if json_output {
-            let results: Vec<_> = devices
+            let all_items: Vec<serde_json::Value> = devices
                 .iter()
                 .zip(statuses.iter())
                 .map(|(info, result)| match result {
@@ -469,7 +595,14 @@ async fn cmd_status(
                     }),
                 })
                 .collect();
-            output::print_json_success(&results);
+            let total = all_items.len();
+            let page = paginate(all_items, list.limit, list.offset, &list.fields);
+            output::print_json_success(&serde_json::json!({
+                "items": page,
+                "total": total,
+                "limit": list.limit,
+                "offset": list.offset,
+            }));
         } else {
             output::print_status_table_header();
             for (info, result) in devices.iter().zip(statuses.iter()) {
@@ -1186,7 +1319,8 @@ async fn cmd_firmware(
                 }
             }
         }
-        FirmwareAction::Update { all } => {
+        FirmwareAction::Update { all, yes } => {
+            errors::check_confirmation(yes, "firmware update")?;
             let infos = if all || cli.group.is_some() {
                 resolve_all_or_group(cli)?
             } else {
@@ -1338,57 +1472,58 @@ async fn cmd_schedule(
     json_output: bool,
 ) -> Result<()> {
     match action {
-        ScheduleAction::List { all } => {
+        ScheduleAction::List { all, list } => {
             if all || cli.group.is_some() {
                 let devices = resolve_all_or_group(cli)?;
-                let mut results = Vec::new();
+                let mut all_items: Vec<serde_json::Value> = Vec::new();
                 for info in &devices {
                     warn_if_auth_required(info, password);
                     let device =
                         api::create_device(info.clone(), http_client.clone(), password.clone());
                     match device.schedule_list().await {
                         Ok(schedules) => {
-                            results.push(serde_json::json!({
-                                "device": info.display_name(),
-                                "ip": info.ip.to_string(),
-                                "schedules": schedules,
-                            }));
+                            if let Some(scheds) = schedules.as_array() {
+                                for s in scheds {
+                                    let mut entry = serde_json::json!({
+                                        "device": info.display_name(),
+                                        "ip": info.ip.to_string(),
+                                    });
+                                    if let Some(obj) = s.as_object() {
+                                        for (k, v) in obj {
+                                            entry[k] = v.clone();
+                                        }
+                                    }
+                                    all_items.push(entry);
+                                }
+                            }
                         }
                         Err(e) => {
-                            if json_output {
-                                results.push(serde_json::json!({
-                                    "device": info.display_name(),
-                                    "ip": info.ip.to_string(),
-                                    "error": e.to_string(),
-                                }));
-                            } else {
+                            if !json_output {
                                 eprintln!("{}: {e}", info.display_name());
                             }
                         }
                     }
                 }
                 if json_output {
-                    output::print_json_success(&results);
+                    let total = all_items.len();
+                    let page = paginate(all_items, list.limit, list.offset, &list.fields);
+                    output::print_json_success(&serde_json::json!({
+                        "items": page,
+                        "total": total,
+                        "limit": list.limit,
+                        "offset": list.offset,
+                    }));
                 } else {
-                    for result in &results {
-                        let name = result["device"].as_str().unwrap_or("?");
-                        let schedules = result["schedules"].as_array();
-                        if let Some(scheds) = schedules {
-                            if scheds.is_empty() {
-                                println!("{name}: no schedules");
-                            } else {
-                                println!("{name}: {} schedule(s)", scheds.len());
-                                for s in scheds {
-                                    let id = s.get("id").and_then(|v| v.as_i64()).unwrap_or(-1);
-                                    let enabled =
-                                        s.get("enable").and_then(|v| v.as_bool()).unwrap_or(false);
-                                    let timespec =
-                                        s.get("timespec").and_then(|v| v.as_str()).unwrap_or("?");
-                                    let status = if enabled { "enabled" } else { "disabled" };
-                                    println!("  [{id}] {timespec} ({status})");
-                                }
-                            }
-                        }
+                    for item in &all_items {
+                        let name = item["device"].as_str().unwrap_or("?");
+                        let id = item.get("id").and_then(|v| v.as_i64()).unwrap_or(-1);
+                        let enabled = item
+                            .get("enable")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        let timespec = item.get("timespec").and_then(|v| v.as_str()).unwrap_or("?");
+                        let status = if enabled { "enabled" } else { "disabled" };
+                        println!("{name}: [{id}] {timespec} ({status})");
                     }
                 }
             } else {
@@ -1396,7 +1531,16 @@ async fn cmd_schedule(
                 let device = &targets[0];
                 let schedules = device.schedule_list().await?;
                 if json_output {
-                    output::print_json_success(&schedules);
+                    let all_items: Vec<serde_json::Value> =
+                        schedules.as_array().cloned().unwrap_or_default();
+                    let total = all_items.len();
+                    let page = paginate(all_items, list.limit, list.offset, &list.fields);
+                    output::print_json_success(&serde_json::json!({
+                        "items": page,
+                        "total": total,
+                        "limit": list.limit,
+                        "offset": list.offset,
+                    }));
                 } else {
                     let arr = schedules.as_array();
                     if arr.is_none_or(|a| a.is_empty()) {
@@ -1427,51 +1571,50 @@ async fn cmd_webhook(
     json_output: bool,
 ) -> Result<()> {
     match action {
-        WebhookAction::List { all } => {
+        WebhookAction::List { all, list } => {
             if all || cli.group.is_some() {
                 let devices = resolve_all_or_group(cli)?;
-                let mut results = Vec::new();
+                let mut all_items: Vec<serde_json::Value> = Vec::new();
                 for info in &devices {
                     warn_if_auth_required(info, password);
                     let device =
                         api::create_device(info.clone(), http_client.clone(), password.clone());
                     match device.webhook_list().await {
                         Ok(hooks) => {
-                            results.push(serde_json::json!({
-                                "device": info.display_name(),
-                                "ip": info.ip.to_string(),
-                                "webhooks": hooks,
-                            }));
+                            if let Some(hook_arr) = hooks.as_array() {
+                                for h in hook_arr {
+                                    let mut entry = serde_json::json!({
+                                        "device": info.display_name(),
+                                        "ip": info.ip.to_string(),
+                                    });
+                                    if let Some(obj) = h.as_object() {
+                                        for (k, v) in obj {
+                                            entry[k] = v.clone();
+                                        }
+                                    }
+                                    all_items.push(entry);
+                                }
+                            }
                         }
                         Err(e) => {
-                            if json_output {
-                                results.push(serde_json::json!({
-                                    "device": info.display_name(),
-                                    "ip": info.ip.to_string(),
-                                    "error": e.to_string(),
-                                }));
-                            } else {
+                            if !json_output {
                                 eprintln!("{}: {e}", info.display_name());
                             }
                         }
                     }
                 }
                 if json_output {
-                    output::print_json_success(&results);
+                    let total = all_items.len();
+                    let page = paginate(all_items, list.limit, list.offset, &list.fields);
+                    output::print_json_success(&serde_json::json!({
+                        "items": page,
+                        "total": total,
+                        "limit": list.limit,
+                        "offset": list.offset,
+                    }));
                 } else {
-                    for result in &results {
-                        let name = result["device"].as_str().unwrap_or("?");
-                        let hooks = result["webhooks"].as_array();
-                        if let Some(hooks) = hooks {
-                            if hooks.is_empty() {
-                                println!("{name}: no webhooks");
-                            } else {
-                                println!("{name}: {} webhook(s)", hooks.len());
-                                for h in hooks {
-                                    print_webhook_entry(h);
-                                }
-                            }
-                        }
+                    for item in &all_items {
+                        print_webhook_entry(item);
                     }
                 }
             } else {
@@ -1479,7 +1622,16 @@ async fn cmd_webhook(
                 let device = &targets[0];
                 let hooks = device.webhook_list().await?;
                 if json_output {
-                    output::print_json_success(&hooks);
+                    let all_items: Vec<serde_json::Value> =
+                        hooks.as_array().cloned().unwrap_or_default();
+                    let total = all_items.len();
+                    let page = paginate(all_items, list.limit, list.offset, &list.fields);
+                    output::print_json_success(&serde_json::json!({
+                        "items": page,
+                        "total": total,
+                        "limit": list.limit,
+                        "offset": list.offset,
+                    }));
                 } else {
                     let arr = hooks.as_array();
                     if arr.is_none_or(|a| a.is_empty()) {
@@ -1619,8 +1771,10 @@ async fn cmd_restore(
     http_client: &reqwest::Client,
     password: &Option<String>,
     file_path: &str,
+    yes: bool,
     json_output: bool,
 ) -> Result<()> {
+    errors::check_confirmation(yes, "restore device configuration")?;
     let data = std::fs::read_to_string(file_path)
         .with_context(|| format!("failed to read backup file: {file_path}"))?;
     let backup: serde_json::Value =
@@ -1785,8 +1939,10 @@ async fn cmd_reboot(
     cli: &Cli,
     http_client: &reqwest::Client,
     password: &Option<String>,
+    yes: bool,
     json_output: bool,
 ) -> Result<()> {
+    errors::check_confirmation(yes, "reboot device(s)")?;
     let targets = resolve_and_probe_targets(cli, http_client, password).await?;
 
     for device in &targets {
@@ -1810,8 +1966,10 @@ async fn cmd_rename(
     http_client: &reqwest::Client,
     password: &Option<String>,
     new_name: &str,
+    yes: bool,
     json_output: bool,
 ) -> Result<()> {
+    errors::check_confirmation(yes, "rename device")?;
     let targets = resolve_and_probe_targets(cli, http_client, password).await?;
 
     if targets.len() != 1 {
@@ -1839,7 +1997,7 @@ async fn cmd_rename(
             "new_name": new_name,
         }));
     } else {
-        println!("Renamed '{}' → '{}'", old_name, new_name);
+        println!("Renamed '{}' to '{}'", old_name, new_name);
     }
 
     Ok(())
@@ -1911,7 +2069,9 @@ async fn cmd_health(
 
 fn cmd_group(action: GroupAction, json_output: bool) -> Result<()> {
     match action {
-        GroupAction::List => groups::list_groups(json_output),
+        GroupAction::List { list } => {
+            groups::list_groups(json_output, list.limit, list.offset, &list.fields)
+        }
         GroupAction::Add { name, devices } => {
             groups::add_group(&name, devices.clone())?;
             if json_output {
@@ -1924,7 +2084,8 @@ fn cmd_group(action: GroupAction, json_output: bool) -> Result<()> {
             }
             Ok(())
         }
-        GroupAction::Remove { name } => {
+        GroupAction::Remove { name, yes } => {
+            errors::check_confirmation(yes, &format!("remove group '{name}'"))?;
             groups::remove_group(&name)?;
             if json_output {
                 output::print_json_success(&serde_json::json!({

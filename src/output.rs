@@ -5,6 +5,26 @@ use owo_colors::OwoColorize;
 use crate::errors::CliError;
 use crate::model::{DeviceInfo, DeviceStatus, PowerReading, SwitchStatus};
 
+/// Three-valued output format. `Auto` lets TTY detection decide; an explicit
+/// `Json` or `Text` always wins regardless of whether stdout is a terminal.
+#[derive(Clone, Copy, PartialEq)]
+pub enum OutputFormat {
+    Auto,
+    Text,
+    Json,
+}
+
+impl OutputFormat {
+    /// Resolve whether JSON output should be emitted.
+    pub fn is_json(self) -> bool {
+        match self {
+            Self::Json => true,
+            Self::Text => false,
+            Self::Auto => !std::io::stdout().is_terminal(),
+        }
+    }
+}
+
 /// Wrap successful data in a `{"ok": true, "data": ...}` envelope and print to stdout.
 pub fn print_json_success<T: serde::Serialize>(data: &T) {
     let envelope = serde_json::json!({
@@ -14,22 +34,29 @@ pub fn print_json_success<T: serde::Serialize>(data: &T) {
     println!("{}", serde_json::to_string_pretty(&envelope).unwrap());
 }
 
-/// Print a structured JSON error envelope to stdout.
+/// Emit the structured error envelope as the last line of stderr.
+///
+/// The envelope is always a single compact JSON line so it is mechanically
+/// extractable regardless of any preceding progress messages on stderr.
 pub fn print_json_error(err: &CliError) {
-    let envelope = serde_json::json!({
-        "ok": false,
-        "error": err,
+    let mut obj = serde_json::json!({
+        "kind": err.kind,
+        "message": err.message,
     });
-    println!("{}", serde_json::to_string_pretty(&envelope).unwrap());
+    if let Some(ref hint) = err.hint {
+        obj["hint"] = serde_json::json!(hint);
+    }
+    let envelope = serde_json::json!({ "error": obj });
+    eprintln!("{}", serde_json::to_string(&envelope).unwrap());
 }
 
 pub fn use_color() -> bool {
-    std::io::stdout().is_terminal()
+    std::env::var("NO_COLOR").is_err() && std::io::stdout().is_terminal()
 }
 
 /// Shorten firmware version for display: extract version from Gen1's long format.
 pub fn short_fw(fw: &str) -> &str {
-    // Gen1: "20230913-113709/v1.14.0-gcb84623" → "v1.14.0"
+    // Gen1: "20230913-113709/v1.14.0-gcb84623" -> "v1.14.0"
     if let Some(rest) = fw.strip_prefix("20")
         && let Some(slash_pos) = rest.find('/')
     {

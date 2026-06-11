@@ -164,11 +164,40 @@ pub fn show_group(name: &str, json: bool) -> Result<()> {
     Ok(())
 }
 
-pub fn list_groups(json: bool) -> Result<()> {
+pub fn list_groups(json: bool, limit: usize, offset: usize, fields: &Option<String>) -> Result<()> {
     let groups = load_groups()?;
+
+    let all_devices = cache::load_devices().unwrap_or_default();
+
+    let mut all_entries: Vec<serde_json::Value> = groups
+        .iter()
+        .map(|(name, def)| {
+            let (count, description) = match def {
+                GroupDef::Names(names) => (names.len(), names.join(", ")),
+                GroupDef::Filter { filter } => {
+                    let count = all_devices
+                        .iter()
+                        .filter(|d| matches_filter(d, filter))
+                        .count();
+                    (count, format!("filter: {filter}"))
+                }
+            };
+            serde_json::json!({
+                "name": name,
+                "device_count": count,
+                "description": description,
+            })
+        })
+        .collect();
+
     if groups.is_empty() {
         if json {
-            crate::output::print_json_success(&Vec::<serde_json::Value>::new());
+            crate::output::print_json_success(&serde_json::json!({
+                "items": Vec::<serde_json::Value>::new(),
+                "total": 0,
+                "limit": limit,
+                "offset": offset,
+            }));
         } else {
             eprintln!("No groups defined. Create groups in ~/.config/shelly-cli/groups.toml");
             eprintln!();
@@ -180,46 +209,49 @@ pub fn list_groups(json: bool) -> Result<()> {
         return Ok(());
     }
 
-    let all_devices = cache::load_devices().unwrap_or_default();
-
     if json {
-        let mut entries = Vec::new();
-        for (name, def) in &groups {
-            let (count, description) = match def {
-                GroupDef::Names(names) => (names.len(), names.join(", ")),
-                GroupDef::Filter { filter } => {
-                    let count = all_devices
+        let total = all_entries.len();
+        let field_list: Option<Vec<&str>> = fields
+            .as_deref()
+            .map(|f| f.split(',').map(str::trim).collect());
+        let page: Vec<serde_json::Value> = all_entries
+            .into_iter()
+            .skip(offset)
+            .take(limit)
+            .map(|item| {
+                if let (Some(fl), Some(obj)) = (&field_list, item.as_object()) {
+                    let filtered: serde_json::Map<_, _> = obj
                         .iter()
-                        .filter(|d| matches_filter(d, filter))
-                        .count();
-                    (count, format!("filter: {filter}"))
+                        .filter(|(k, _)| fl.contains(&k.as_str()))
+                        .map(|(k, v)| (k.clone(), v.clone()))
+                        .collect();
+                    serde_json::Value::Object(filtered)
+                } else {
+                    item
                 }
-            };
-            entries.push(serde_json::json!({
-                "name": name,
-                "device_count": count,
-                "description": description,
-            }));
-        }
-        crate::output::print_json_success(&entries);
+            })
+            .collect();
+        crate::output::print_json_success(&serde_json::json!({
+            "items": page,
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+        }));
         return Ok(());
     }
 
-    for (name, def) in &groups {
-        let count = match def {
-            GroupDef::Names(names) => names.len(),
-            GroupDef::Filter { filter } => all_devices
-                .iter()
-                .filter(|d| matches_filter(d, filter))
-                .count(),
-        };
+    all_entries.sort_by(|a, b| {
+        a["name"]
+            .as_str()
+            .unwrap_or("")
+            .cmp(b["name"].as_str().unwrap_or(""))
+    });
 
-        let desc = match def {
-            GroupDef::Names(names) => names.join(", "),
-            GroupDef::Filter { filter } => format!("filter: {filter}"),
-        };
-
-        println!("{name:<20} ({count} devices) — {desc}");
+    for entry in all_entries.iter().skip(offset).take(limit) {
+        let name = entry["name"].as_str().unwrap_or("?");
+        let count = entry["device_count"].as_u64().unwrap_or(0);
+        let desc = entry["description"].as_str().unwrap_or("?");
+        println!("{name:<20} ({count} devices) - {desc}");
     }
 
     Ok(())

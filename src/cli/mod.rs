@@ -1,8 +1,22 @@
 use clap::{Args, Parser, Subcommand};
 
+/// Pagination and field-selection flags shared by list commands.
+#[derive(Args, Clone)]
+pub struct ListArgs {
+    /// Maximum number of items to return
+    #[arg(long, default_value = "100")]
+    pub limit: usize,
+    /// Number of items to skip before returning results
+    #[arg(long, default_value = "0")]
+    pub offset: usize,
+    /// Comma-separated list of field names to include in each item
+    #[arg(long)]
+    pub fields: Option<String>,
+}
+
 #[derive(Parser)]
 #[command(
-    about = "CLI for managing Shelly devices",
+    about = "CLI for managing Shelly devices. Run 'shelly schema' for machine-readable introspection.",
     version,
     after_long_help = "\
 Examples:
@@ -29,8 +43,13 @@ pub struct Cli {
     #[arg(long, short = 'g', global = true)]
     pub group: Option<String>,
 
-    /// Output as JSON (auto-enabled when stdout is not a terminal)
-    #[arg(long, short = 'j', global = true)]
+    /// Output format: auto detects TTY (default), json, or text
+    #[arg(long, short = 'o', global = true, default_value = "auto",
+          value_parser = ["auto", "text", "json"])]
+    pub output: String,
+
+    /// Force JSON output (kept for backwards compatibility; prefer --output json)
+    #[arg(long, short = 'j', global = true, hide = true)]
     pub json: bool,
 
     /// Suppress non-data output
@@ -63,6 +82,8 @@ pub enum Command {
         /// Re-scan network before listing
         #[arg(long)]
         refresh: bool,
+        #[command(flatten)]
+        list: ListArgs,
     },
 
     /// Get device status
@@ -70,6 +91,8 @@ pub enum Command {
         /// Query all known devices
         #[arg(long, short = 'a')]
         all: bool,
+        #[command(flatten)]
+        list: ListArgs,
     },
 
     /// Control switch/relay outputs
@@ -141,6 +164,12 @@ pub enum Command {
         action: ConfigAction,
     },
 
+    /// Manage device groups
+    Group {
+        #[command(subcommand)]
+        action: GroupAction,
+    },
+
     /// View device schedules
     Schedule {
         #[command(subcommand)]
@@ -159,24 +188,34 @@ pub enum Command {
         #[arg(long, short = 'a')]
         all: bool,
         /// Output directory (default: current directory)
-        #[arg(long, short = 'o')]
-        output: Option<String>,
+        #[arg(long)]
+        dir: Option<String>,
     },
 
     /// Restore device configuration from a backup file
     Restore {
         /// Path to the backup JSON file
         file: String,
+        /// Skip confirmation prompt (required when stdin is not a terminal)
+        #[arg(long, short = 'y')]
+        yes: bool,
     },
 
     /// Rename a device
     Rename {
         /// New name for the device
         new_name: String,
+        /// Skip confirmation prompt (required when stdin is not a terminal)
+        #[arg(long, short = 'y')]
+        yes: bool,
     },
 
     /// Reboot a device
-    Reboot,
+    Reboot {
+        /// Skip confirmation prompt (required when stdin is not a terminal)
+        #[arg(long, short = 'y')]
+        yes: bool,
+    },
 
     /// Live-updating dashboard of all devices
     Watch {
@@ -191,14 +230,7 @@ pub enum Command {
     /// Check device health (temperature, WiFi, firmware, online status)
     Health,
 
-    /// Manage device groups
-    Group {
-        #[command(subcommand)]
-        action: GroupAction,
-    },
-
-    /// Dump all commands as JSON for agent introspection
-    #[command(hide = true)]
+    /// Output a machine-readable JSON description of all commands, arguments, and error kinds
     Schema,
 
     /// Generate shell completions (with dynamic device name completion)
@@ -312,6 +344,9 @@ pub enum FirmwareAction {
         /// Update all known devices
         #[arg(long, short = 'a')]
         all: bool,
+        /// Skip confirmation prompt (required when stdin is not a terminal)
+        #[arg(long, short = 'y')]
+        yes: bool,
     },
 }
 
@@ -339,6 +374,8 @@ pub enum ScheduleAction {
         /// List schedules for all devices
         #[arg(long, short = 'a')]
         all: bool,
+        #[command(flatten)]
+        list: ListArgs,
     },
 }
 
@@ -349,13 +386,18 @@ pub enum WebhookAction {
         /// List webhooks for all devices
         #[arg(long, short = 'a')]
         all: bool,
+        #[command(flatten)]
+        list: ListArgs,
     },
 }
 
 #[derive(Subcommand, Clone)]
 pub enum GroupAction {
     /// List all defined groups
-    List,
+    List {
+        #[command(flatten)]
+        list: ListArgs,
+    },
     /// Add a new group
     Add {
         /// Group name
@@ -368,6 +410,9 @@ pub enum GroupAction {
     Remove {
         /// Group name to remove
         name: String,
+        /// Skip confirmation prompt (required when stdin is not a terminal)
+        #[arg(long, short = 'y')]
+        yes: bool,
     },
     /// Show devices in a group
     Show {
