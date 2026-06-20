@@ -1,4 +1,4 @@
-.PHONY: build release test lint fmt fmt-check clean install release-patch release-minor release-major
+.PHONY: build release test lint fmt fmt-check check clean install release-patch release-minor release-major
 
 build:
 	cargo build
@@ -17,6 +17,8 @@ fmt:
 
 fmt-check:
 	cargo fmt --check
+
+check: fmt-check lint test
 
 clean:
 	cargo clean
