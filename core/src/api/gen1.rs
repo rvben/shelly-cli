@@ -179,7 +179,7 @@ impl Gen1Device {
         Ok(())
     }
 
-    pub async fn config_set(&self, key: &str, value: &str) -> Result<()> {
+    pub async fn config_set(&self, key: &str, value: &str) -> Result<serde_json::Value> {
         let param = match key {
             "name" => ("name", value.to_string()),
             "eco_mode" => ("eco_mode_enabled", value.to_string()),
@@ -193,8 +193,7 @@ impl Gen1Device {
             }
         };
         self.get_json(&format!("/settings?{}={}", param.0, param.1))
-            .await?;
-        Ok(())
+            .await
     }
 
     pub async fn schedule_list(&self) -> Result<serde_json::Value> {

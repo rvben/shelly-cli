@@ -86,6 +86,19 @@ impl Gen2Device {
         &self.info
     }
 
+    /// Raw JSON-RPC passthrough: call `method` with `params` verbatim and
+    /// return the device's raw JSON response. Used by the console command
+    /// path, where the caller (not this crate) has already classified the
+    /// method's hazard; a device-side `error` object still becomes
+    /// `Error::Rejected` via `rpc_call`.
+    pub async fn rpc_raw(
+        &self,
+        method: &str,
+        params: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value> {
+        self.rpc_call(method, params).await
+    }
+
     pub async fn status(&self) -> Result<DeviceStatus> {
         let status = self.rpc_call("Shelly.GetStatus", None).await?;
         Ok(DeviceStatus::from_gen2(&status))
@@ -231,7 +244,7 @@ impl Gen2Device {
         Ok(())
     }
 
-    pub async fn config_set(&self, key: &str, value: &str) -> Result<()> {
+    pub async fn config_set(&self, key: &str, value: &str) -> Result<serde_json::Value> {
         // Map user-friendly keys to Gen2 RPC config paths
         let (component, config_key) = match key {
             "name" => ("sys", "device"),
@@ -271,8 +284,7 @@ impl Gen2Device {
             "Sys.SetConfig",
             Some(serde_json::json!({ "config": config[component] })),
         )
-        .await?;
-        Ok(())
+        .await
     }
 
     pub async fn schedule_list(&self) -> Result<serde_json::Value> {

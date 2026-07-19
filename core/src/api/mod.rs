@@ -141,7 +141,7 @@ impl ShellyDevice {
         }
     }
 
-    pub async fn config_set(&self, key: &str, value: &str) -> Result<()> {
+    pub async fn config_set(&self, key: &str, value: &str) -> Result<serde_json::Value> {
         match self {
             Self::Gen1(d) => d.config_set(key, value).await,
             Self::Gen2(d) => d.config_set(key, value).await,

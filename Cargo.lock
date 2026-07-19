@@ -1689,11 +1689,13 @@ dependencies = [
 name = "shelly-core"
 version = "0.1.12"
 dependencies = [
+ "async-trait",
  "httpmock",
  "ipnet",
  "reqwest",
  "serde",
  "serde_json",
+ "switchkit",
  "thiserror",
  "tokio",
 ]
@@ -1786,6 +1788,19 @@ name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
+
+[[package]]
+name = "switchkit"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a1936a41af6d06fe07d9863c4280575c6e091f4f406b0fb4b062b08ae3fa826f"
+dependencies = [
+ "async-trait",
+ "futures",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
 
 [[package]]
 name = "syn"

@@ -18,6 +18,8 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 ipnet = { workspace = true }
 thiserror = "2"
+switchkit = "0.2"
+async-trait = "0.1"
 
 [dev-dependencies]
 httpmock = "0.8"

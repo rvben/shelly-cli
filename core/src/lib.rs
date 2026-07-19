@@ -1,6 +1,7 @@
 pub mod api;
 pub mod error;
 pub mod model;
+pub mod switchkit_impl;
 
 pub use api::discovery::{enrich_gen1_name, scan_subnet};
 pub use api::gen1::Gen1Device;
@@ -15,3 +16,4 @@ pub use model::{
     DeviceGeneration, DeviceInfo, DeviceStatus, LightComponent, LightKind, LightParams,
     LightStatus, PowerReading, SwitchStatus,
 };
+pub use switchkit_impl::ShellyClient;
