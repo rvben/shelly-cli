@@ -275,7 +275,7 @@ mod tests {
             "wifi_sta": {
                 "connected": true,
                 "ssid": "MyNetwork",
-                "ip": "10.10.20.5",
+                "ip": "192.0.2.5",
                 "rssi": -58
             },
             "uptime": 86400,
@@ -300,7 +300,7 @@ mod tests {
         let wifi = ds.wifi.unwrap();
         assert!(wifi.connected);
         assert_eq!(wifi.ssid.as_deref(), Some("MyNetwork"));
-        assert_eq!(wifi.ip.as_deref(), Some("10.10.20.5"));
+        assert_eq!(wifi.ip.as_deref(), Some("192.0.2.5"));
         assert_eq!(wifi.rssi, Some(-58));
 
         assert_eq!(ds.uptime, Some(86400));
@@ -330,7 +330,7 @@ mod tests {
                 "state": true
             },
             "wifi": {
-                "sta_ip": "10.10.20.10",
+                "sta_ip": "192.0.2.10",
                 "status": "got ip",
                 "ssid": "HomeNet",
                 "rssi": -45
@@ -361,7 +361,7 @@ mod tests {
         let wifi = ds.wifi.unwrap();
         assert!(wifi.connected);
         assert_eq!(wifi.ssid.as_deref(), Some("HomeNet"));
-        assert_eq!(wifi.ip.as_deref(), Some("10.10.20.10"));
+        assert_eq!(wifi.ip.as_deref(), Some("192.0.2.10"));
         assert_eq!(wifi.rssi, Some(-45));
 
         assert_eq!(ds.uptime, Some(3600));

@@ -3,7 +3,7 @@ use std::io::IsTerminal;
 use owo_colors::OwoColorize;
 
 use crate::errors::CliError;
-use crate::model::{DeviceInfo, DeviceStatus, PowerReading, SwitchStatus};
+use shelly_core::model::{DeviceInfo, DeviceStatus, PowerReading, SwitchStatus};
 
 /// Three-valued output format. `Auto` lets TTY detection decide; an explicit
 /// `Json` or `Text` always wins regardless of whether stdout is a terminal.
@@ -95,9 +95,9 @@ pub fn print_device_table(devices: &[DeviceInfo]) {
 
         if color {
             let gen_colored = match d.generation {
-                crate::model::DeviceGeneration::Gen1 => gen_str.dimmed().to_string(),
-                crate::model::DeviceGeneration::Gen2 => gen_str.to_string(),
-                crate::model::DeviceGeneration::Gen3 => gen_str.green().to_string(),
+                shelly_core::model::DeviceGeneration::Gen1 => gen_str.dimmed().to_string(),
+                shelly_core::model::DeviceGeneration::Gen2 => gen_str.to_string(),
+                shelly_core::model::DeviceGeneration::Gen3 => gen_str.green().to_string(),
             };
             println!(
                 " {:<33} {:<16} {:<5} {:<14} {:<12} {}",
@@ -344,7 +344,7 @@ pub fn print_switch_status(sw: &SwitchStatus) {
     }
 }
 
-pub fn print_light_status(s: &crate::model::LightStatus) {
+pub fn print_light_status(s: &shelly_core::model::LightStatus) {
     let color = use_color();
     let state = if s.output {
         if color {

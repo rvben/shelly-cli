@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 
-use crate::model::DeviceInfo;
+use shelly_core::model::DeviceInfo;
 
 fn cache_path() -> Result<PathBuf> {
     let dir = dirs::config_dir()
@@ -97,11 +97,11 @@ pub fn find_device_by_name_with_suggestions(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::DeviceGeneration;
+    use shelly_core::model::DeviceGeneration;
 
     fn test_device(name: &str, id: &str, generation: DeviceGeneration) -> DeviceInfo {
         DeviceInfo {
-            ip: "10.10.20.1".parse().unwrap(),
+            ip: "192.0.2.1".parse().unwrap(),
             name: Some(name.to_string()),
             id: id.to_string(),
             mac: "AABBCCDDEEFF".to_string(),

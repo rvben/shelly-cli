@@ -1373,9 +1373,22 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "shelly-core",
  "strsim",
  "tokio",
  "toml",
+]
+
+[[package]]
+name = "shelly-core"
+version = "0.1.12"
+dependencies = [
+ "anyhow",
+ "ipnet",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

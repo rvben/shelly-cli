@@ -1,4 +1,3 @@
-mod api;
 mod cache;
 mod cli;
 mod color;
@@ -6,7 +5,6 @@ mod config;
 mod errors;
 mod groups;
 mod health;
-mod model;
 mod output;
 mod schema;
 mod watch;
@@ -20,6 +18,7 @@ use futures::future::join_all;
 use anyhow::{Context, Result};
 use clap::{CommandFactory, FromArgMatches};
 use owo_colors::OwoColorize;
+use shelly_core::{api, model};
 
 use cli::{
     Cli, Command, ConfigAction, FirmwareAction, GroupAction, LightAction, ListArgs, ScheduleAction,

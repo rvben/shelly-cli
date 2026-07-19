@@ -1,9 +1,9 @@
 use owo_colors::OwoColorize;
 use serde::Serialize;
 
-use crate::api;
-use crate::model::DeviceInfo;
 use crate::output::{format_duration, use_color};
+use shelly_core::api;
+use shelly_core::model::DeviceInfo;
 
 const TEMP_WARN_C: f64 = 60.0;
 const TEMP_CRIT_C: f64 = 75.0;

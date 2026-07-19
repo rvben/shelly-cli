@@ -10,9 +10,9 @@ use crossterm::{
 };
 use owo_colors::OwoColorize;
 
-use crate::api;
-use crate::model::DeviceInfo;
 use crate::output::format_duration_short;
+use shelly_core::api;
+use shelly_core::model::DeviceInfo;
 
 /// RAII guard that restores terminal state on drop, even if the watch loop panics.
 struct TerminalGuard;

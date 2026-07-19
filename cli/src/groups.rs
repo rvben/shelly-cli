@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::cache;
-use crate::model::DeviceInfo;
+use shelly_core::model::DeviceInfo;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -37,9 +37,9 @@ pub fn load_groups() -> Result<HashMap<String, GroupDef>> {
 fn matches_filter(device: &DeviceInfo, filter: &str) -> bool {
     let filter_lower = filter.to_lowercase();
     match filter_lower.as_str() {
-        "gen1" => device.generation == crate::model::DeviceGeneration::Gen1,
-        "gen2" => device.generation == crate::model::DeviceGeneration::Gen2,
-        "gen3" => device.generation == crate::model::DeviceGeneration::Gen3,
+        "gen1" => device.generation == shelly_core::model::DeviceGeneration::Gen1,
+        "gen2" => device.generation == shelly_core::model::DeviceGeneration::Gen2,
+        "gen3" => device.generation == shelly_core::model::DeviceGeneration::Gen3,
         "all" => true,
         _ => {
             device.model.to_lowercase().contains(&filter_lower)
@@ -260,11 +260,11 @@ pub fn list_groups(json: bool, limit: usize, offset: usize, fields: &Option<Stri
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::DeviceGeneration;
+    use shelly_core::model::DeviceGeneration;
 
     fn test_device(name: &str, id: &str, generation: DeviceGeneration, model: &str) -> DeviceInfo {
         DeviceInfo {
-            ip: "10.10.20.1".parse().unwrap(),
+            ip: "192.0.2.1".parse().unwrap(),
             name: Some(name.to_string()),
             id: id.to_string(),
             mac: "AABBCCDDEEFF".to_string(),

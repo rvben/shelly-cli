@@ -1,0 +1,20 @@
+[package]
+name = "shelly-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Core Shelly device API and model types (Gen1/Gen2/Gen3 HTTP + RPC clients)"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+reqwest = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+ipnet = { workspace = true }
+anyhow = "1"

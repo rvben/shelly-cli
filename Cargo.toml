@@ -1,42 +1,26 @@
-[package]
-name = "shelly-cli"
+[workspace]
+members = ["core", "cli"]
+resolver = "2"
+
+[workspace.package]
 version = "0.1.12"
 edition = "2024"
-description = "CLI for managing and controlling Shelly devices"
+rust-version = "1.90"
 license = "MIT"
 repository = "https://github.com/rvben/shelly-cli"
 homepage = "https://github.com/rvben/shelly-cli"
+authors = ["Ruben Jongejan <ruben.jongejan@gmail.com>"]
 keywords = ["shelly", "home-automation", "iot", "smart-home", "cli"]
 categories = ["command-line-utilities", "network-programming"]
-readme = "README.md"
-authors = ["Ruben Jongejan <ruben.jongejan@gmail.com>"]
-default-run = "shelly"
 
-[[bin]]
-name = "shelly"
-path = "src/main.rs"
-
-[[bin]]
-name = "shelly-cli"
-path = "src/main.rs"
-
-[dependencies]
-clap = { version = "4", features = ["derive"] }
-tokio = { version = "1", features = ["full"] }
+[workspace.dependencies]
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-dirs = "6"
+tokio = { version = "1", features = ["full"] }
 ipnet = "2"
-anyhow = "1"
-toml = "0.8"
-clap_complete = "4"
-strsim = "0.11"
-crossterm = "0.28"
-chrono = "0.4"
-owo-colors = "4"
-netdev = "0.41"
 futures = "0.3"
+chrono = "0.4"
 
 [profile.release]
 strip = true

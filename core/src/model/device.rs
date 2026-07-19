@@ -110,7 +110,7 @@ mod tests {
     use serde_json::json;
 
     fn ip() -> IpAddr {
-        "10.10.20.1".parse().unwrap()
+        "192.0.2.1".parse().unwrap()
     }
 
     #[test]
