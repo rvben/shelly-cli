@@ -30,6 +30,6 @@ Repository = "https://github.com/rvben/shelly-cli.git"
 
 [tool.maturin]
 bindings = "bin"
-manifest-path = "Cargo.toml"
+manifest-path = "cli/Cargo.toml"
 python-packages = ["shelly_cli"]
 strip = true

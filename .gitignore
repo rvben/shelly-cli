@@ -17,3 +17,9 @@ PLAN.md
 .DS_Store
 
 .claude/investigations/
+
+# Internal agent/tooling artifacts
+/.superpowers/
+/docs/superpowers/
+/CLAUDE.md
+/CLAUDE.local.md
