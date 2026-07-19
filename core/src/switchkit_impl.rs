@@ -77,6 +77,20 @@ fn map_err(err: CoreError, host: &str) -> switchkit::Error {
     }
 }
 
+/// `DeviceInfo.model`/`firmware_version` default to the sentinel `"unknown"`
+/// when the device's `/shelly` response omits them (see
+/// `Gen2ShellyResponse::default_unknown`). Reporting that sentinel as a real
+/// value would fabricate absent-as-a-plausible-value, so this maps it (and
+/// an empty/whitespace-only string) back to `None`.
+fn non_sentinel(s: &str) -> Option<String> {
+    let trimmed = s.trim();
+    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("unknown") {
+        None
+    } else {
+        Some(s.to_string())
+    }
+}
+
 /// Map a Shelly `DeviceStatus` (a snapshot from the device, already parsed)
 /// onto a vendor-neutral `DeviceSnapshot`. `host` is `DeviceTarget.host`,
 /// passed through explicitly rather than derived from `info.ip`, so any port
@@ -149,15 +163,22 @@ fn snapshot_from(host: &str, info: &DeviceInfo, status: DeviceStatus) -> DeviceS
     DeviceSnapshot {
         host: host.to_string(),
         name: info.name.clone(),
-        model: Some(info.model.clone()),
+        // The sentinel `"unknown"` `DeviceInfo` falls back to when the
+        // device's `/shelly` response omits `model` is never surfaced as a
+        // real value here - only a model the device actually reported.
+        model: non_sentinel(&info.model),
         generation: Some(info.generation.to_string()),
         capabilities,
         relays,
         energy,
         signal,
         temperature_c: status.temperature_c,
-        firmware: Some(Firmware {
-            version: Some(info.firmware_version.clone()),
+        // Same sentinel handling for firmware. If there is no real version
+        // to report, the whole `Firmware` block is omitted rather than
+        // emitting a `Firmware { version: None, .. }` shell that would
+        // falsely claim a firmware block exists with an unknown version.
+        firmware: non_sentinel(&info.firmware_version).map(|version| Firmware {
+            version: Some(version),
             // Shelly's status/info responses don't carry an "update
             // available" flag cheaply alongside them (that's a separate
             // `Shelly.CheckForUpdate` round trip); leave it unknown rather
@@ -366,5 +387,93 @@ impl SmartDevice for ShellyClient {
                 message: "Gen1 devices have no RPC console".to_string(),
             }),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use httpmock::prelude::*;
+    use switchkit::DeviceTarget;
+
+    /// Minimal Gen2 `Shelly.GetStatus` body: no switch components, so
+    /// `snapshot_from` builds an empty `relays`/`energy`. Only
+    /// model/firmware are under test here.
+    fn empty_gen2_status() -> serde_json::Value {
+        serde_json::json!({})
+    }
+
+    #[tokio::test]
+    async fn snapshot_omits_sentinel_model_and_firmware() {
+        let server = MockServer::start_async().await;
+        server
+            .mock_async(|when, then| {
+                when.method(GET).path("/shelly");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "shellyplus1-abc",
+                    "mac": "AABBCCDDEEFF",
+                    "gen": 2
+                }));
+            })
+            .await;
+        server
+            .mock_async(|when, then| {
+                when.method(GET).path("/rpc/Shelly.GetStatus");
+                then.status(200).json_body(empty_gen2_status());
+            })
+            .await;
+
+        let client = ShellyClient::default();
+        let target = DeviceTarget::new(server.address().to_string());
+        let snapshot = client
+            .status(&target)
+            .await
+            .expect("status should succeed against the mock");
+
+        assert_eq!(
+            snapshot.model, None,
+            "the 'unknown' sentinel must not be exposed as a real model"
+        );
+        assert_eq!(
+            snapshot.firmware, None,
+            "the 'unknown' sentinel must not be exposed as a real firmware version"
+        );
+    }
+
+    #[tokio::test]
+    async fn snapshot_reports_real_model_and_firmware() {
+        let server = MockServer::start_async().await;
+        server
+            .mock_async(|when, then| {
+                when.method(GET).path("/shelly");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "shellyplus1pm-aabbccddeeff",
+                    "mac": "AABBCCDDEEFF",
+                    "model": "SNSW-001P16EU",
+                    "gen": 2,
+                    "ver": "1.2.3",
+                    "app": "Plus1PM"
+                }));
+            })
+            .await;
+        server
+            .mock_async(|when, then| {
+                when.method(GET).path("/rpc/Shelly.GetStatus");
+                then.status(200).json_body(empty_gen2_status());
+            })
+            .await;
+
+        let client = ShellyClient::default();
+        let target = DeviceTarget::new(server.address().to_string());
+        let snapshot = client
+            .status(&target)
+            .await
+            .expect("status should succeed against the mock");
+
+        assert_eq!(snapshot.model.as_deref(), Some("SNSW-001P16EU"));
+        assert_eq!(
+            snapshot.firmware.and_then(|f| f.version).as_deref(),
+            Some("1.2.3")
+        );
     }
 }

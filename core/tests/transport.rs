@@ -159,6 +159,40 @@ async fn probe_target_reaches_gen2_mock_via_host_port() {
 }
 
 #[tokio::test]
+async fn probe_target_unparseable_host_of_reachable_shelly_is_unsupported_not_parse() {
+    // A hostname (not an IP) that a real device answers on: `/shelly`
+    // succeeds, so this must NOT be classified the same as "reachable but
+    // not a Shelly" (`Error::Parse`). Point a non-IP hostname at the mock
+    // via reqwest's per-domain resolver override, so the HTTP fetch is a
+    // genuine success and only the ip-parse step fails.
+    let server = MockServer::start_async().await;
+    server
+        .mock_async(|when, then| {
+            when.method(GET).path("/shelly");
+            then.status(200).json_body(gen2_shelly_body());
+        })
+        .await;
+
+    let hostname = "shelly-test-host.invalid";
+    let addr = *server.address();
+
+    let client = reqwest::Client::builder()
+        .resolve(hostname, addr)
+        .build()
+        .expect("failed to build client with resolve override");
+
+    let host = format!("{hostname}:{}", addr.port());
+
+    let err = probe_target(&host, &client)
+        .await
+        .expect_err("expected an error");
+    assert!(
+        matches!(err, Error::Unsupported { .. }),
+        "a reachable Shelly on a non-IP host must be Error::Unsupported, not Error::Parse (which means 'reachable, answered, NOT a Shelly'); got {err:?}"
+    );
+}
+
+#[tokio::test]
 async fn create_device_with_host_reaches_mock_server() {
     let server = MockServer::start_async().await;
     server

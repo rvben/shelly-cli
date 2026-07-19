@@ -219,9 +219,13 @@ pub async fn probe_device(ip: IpAddr, client: &reqwest::Client) -> Result<Device
 /// unreachable/non-success -> `Network` (or `Auth` for 401/403), a JSON body
 /// that fails to decode -> `Parse`, and a JSON body that decodes but does
 /// not describe a Shelly device -> `Parse` as well (reachable, answered,
-/// just not a Shelly). This is what lets a caller distinguish "nothing
-/// there" (`Network`/`Err`) from "something else is there" (`Parse`/`Err`
-/// still, but a different variant) from "a Shelly is there" (`Ok`).
+/// just not a Shelly). A `/shelly` response that DOES describe a Shelly, on
+/// a `host` that isn't an IP address (hostname/mDNS) -> `Unsupported`: the
+/// device is real, so this must not collapse into the "not a Shelly" case.
+/// This is what lets a caller distinguish "nothing there" (`Network`/`Err`)
+/// from "something else is there" (`Parse`/`Err` still, but a different
+/// variant) from "a Shelly is there but this client can't address it yet"
+/// (`Unsupported`/`Err`) from "a Shelly is there" (`Ok`).
 pub async fn probe_target(host: &str, client: &reqwest::Client) -> Result<DeviceInfo> {
     let url = format!("http://{host}/shelly");
     let resp = client.get(&url).send().await?;
@@ -234,8 +238,16 @@ pub async fn probe_target(host: &str, client: &reqwest::Client) -> Result<Device
 
     let shelly: serde_json::Value = resp.json().await?;
 
-    let ip = parse_host_ip(host).ok_or_else(|| Error::Parse {
-        message: format!("cannot determine an IP address for host '{host}'"),
+    // `/shelly` answered - a real device (Shelly or otherwise) is there.
+    // A host we can't turn into an `IpAddr` (a hostname/mDNS name) is NOT
+    // "reachable, answered, not a Shelly" (`Error::Parse`); that would
+    // silently misclassify a real Shelly as absent. It genuinely can't be
+    // represented by `DeviceInfo.ip: IpAddr` yet, so report it honestly as
+    // unsupported rather than folding it into the not-a-Shelly case.
+    let ip = parse_host_ip(host).ok_or_else(|| Error::Unsupported {
+        message: format!(
+            "host '{host}' is not an IP address; hostname/mDNS targets are not yet supported (use the device IP)"
+        ),
     })?;
 
     let mut info = DeviceInfo::from_shelly_response(ip, &shelly).ok_or_else(|| Error::Parse {
