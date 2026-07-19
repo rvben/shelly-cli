@@ -1,5 +1,5 @@
-use anyhow::{Context, Result};
-
+use crate::Result;
+use crate::error::{self, Error};
 use crate::model::{
     DeviceInfo, DeviceStatus, LightComponent, LightKind, LightParams, LightStatus, PowerReading,
     SwitchStatus,
@@ -9,21 +9,37 @@ use super::{FirmwareInfo, SwitchResult};
 
 pub struct Gen2Device {
     info: DeviceInfo,
+    base_host: String,
     client: reqwest::Client,
     password: Option<String>,
 }
 
 impl Gen2Device {
     pub fn new(info: DeviceInfo, client: reqwest::Client, password: Option<String>) -> Self {
+        let base_host = info.ip.to_string();
+        Self::new_with_host(info, base_host, client, password)
+    }
+
+    /// Build a `Gen2Device` addressed by an explicit `host[:port]` string
+    /// rather than `info.ip`, so a device that isn't reachable on the
+    /// default port (or that must be reached by a test harness on an
+    /// ephemeral loopback port) can still be targeted.
+    pub fn new_with_host(
+        info: DeviceInfo,
+        base_host: String,
+        client: reqwest::Client,
+        password: Option<String>,
+    ) -> Self {
         Self {
             info,
+            base_host,
             client,
             password,
         }
     }
 
     fn rpc_url(&self, method: &str) -> String {
-        format!("http://{}/rpc/{method}", self.info.ip)
+        format!("http://{}/rpc/{method}", self.base_host)
     }
 
     async fn rpc_call(
@@ -38,26 +54,32 @@ impl Gen2Device {
             if let Some(ref password) = self.password {
                 req = req.basic_auth("admin", Some(password));
             }
-            req.send().await
+            req.send().await?
         } else {
             let mut req = self.client.get(&url);
             if let Some(ref password) = self.password {
                 req = req.basic_auth("admin", Some(password));
             }
-            req.send().await
+            req.send().await?
         };
 
-        let resp = resp.with_context(|| format!("failed to reach {url}"))?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
+        let status = resp.status();
+        if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
-            anyhow::bail!("HTTP {status} from {url}: {body}");
+            return Err(error::status_error(status, &url, &body));
         }
 
-        resp.json()
-            .await
-            .with_context(|| format!("invalid JSON from {url}"))
+        let body: serde_json::Value = resp.json().await?;
+
+        // An HTTP 200 with an RPC-error body is not success: the device was
+        // reached and answered, but explicitly refused the request.
+        if let Some(err_obj) = body.get("error") {
+            return Err(Error::Rejected {
+                message: rpc_error_message(method, err_obj),
+            });
+        }
+
+        Ok(body)
     }
 
     pub fn info(&self) -> &DeviceInfo {
@@ -216,9 +238,11 @@ impl Gen2Device {
             "eco_mode" => ("sys", "device"),
             "led_status_disable" | "led" => ("sys", "ui"),
             _ => {
-                anyhow::bail!(
-                    "unknown config key '{key}'. Supported keys: name, eco_mode, led_status_disable"
-                );
+                return Err(Error::Unsupported {
+                    message: format!(
+                        "unknown config key '{key}'. Supported keys: name, eco_mode, led_status_disable"
+                    ),
+                });
             }
         };
 
@@ -271,9 +295,9 @@ impl Gen2Device {
         // Skip network-related config to avoid bricking the device
         const SKIP_COMPONENTS: &[&str] = &["wifi", "eth", "ble", "cloud", "mqtt", "ws"];
 
-        let obj = config
-            .as_object()
-            .ok_or_else(|| anyhow::anyhow!("config must be a JSON object"))?;
+        let obj = config.as_object().ok_or_else(|| Error::Parse {
+            message: "config must be a JSON object".to_string(),
+        })?;
 
         for (component, value) in obj {
             // Skip network/connectivity components
@@ -336,6 +360,20 @@ impl Gen2Device {
         });
         self.rpc_call("Sys.SetConfig", Some(params)).await?;
         Ok(())
+    }
+}
+
+/// Format a Gen2 RPC `error` object (from an HTTP 200 body) into a
+/// diagnostic message for `Error::Rejected`.
+fn rpc_error_message(method: &str, err: &serde_json::Value) -> String {
+    let code = err.get("code").and_then(|v| v.as_i64());
+    let message = err
+        .get("message")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown error");
+    match code {
+        Some(code) => format!("{method} rejected (code {code}): {message}"),
+        None => format!("{method} rejected: {message}"),
     }
 }
 
@@ -439,5 +477,14 @@ mod tests {
         let body = build_set_body(LightKind::Light, 0, &params);
         assert_eq!(body.get("on"), Some(&serde_json::json!(true)));
         assert_eq!(body.get("brightness"), Some(&serde_json::json!(40)));
+    }
+
+    #[test]
+    fn rpc_error_message_includes_code_and_message() {
+        let err = serde_json::json!({ "code": -103, "message": "invalid argument" });
+        let message = rpc_error_message("Shelly.Reboot", &err);
+        assert!(message.contains("-103"));
+        assert!(message.contains("invalid argument"));
+        assert!(message.contains("Shelly.Reboot"));
     }
 }

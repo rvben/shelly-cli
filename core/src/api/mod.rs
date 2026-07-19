@@ -2,10 +2,10 @@ pub mod discovery;
 pub mod gen1;
 pub mod gen2;
 
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 
-use anyhow::Result;
-
+use crate::Result;
+use crate::error::Error;
 use crate::model::{
     DeviceInfo, DeviceStatus, LightComponent, LightKind, LightParams, LightStatus, PowerReading,
     SwitchStatus,
@@ -27,6 +27,14 @@ pub struct FirmwareInfo {
 pub enum ShellyDevice {
     Gen1(gen1::Gen1Device),
     Gen2(gen2::Gen2Device),
+}
+
+/// A Gen1 device does not implement light control at all; every light
+/// operation on it is genuinely unsupported.
+fn gen1_light_unsupported() -> Error {
+    Error::Unsupported {
+        message: "light control for Gen1 devices is not yet implemented (planned)".to_string(),
+    }
 }
 
 impl ShellyDevice {
@@ -67,9 +75,7 @@ impl ShellyDevice {
 
     pub async fn light_components(&self) -> Result<Vec<LightComponent>> {
         match self {
-            Self::Gen1(_) => {
-                anyhow::bail!("light control for Gen1 devices is not yet implemented (planned)")
-            }
+            Self::Gen1(_) => Err(gen1_light_unsupported()),
             Self::Gen2(d) => d.light_components().await,
         }
     }
@@ -81,27 +87,21 @@ impl ShellyDevice {
         params: &LightParams,
     ) -> Result<SwitchResult> {
         match self {
-            Self::Gen1(_) => {
-                anyhow::bail!("light control for Gen1 devices is not yet implemented (planned)")
-            }
+            Self::Gen1(_) => Err(gen1_light_unsupported()),
             Self::Gen2(d) => d.light_set(kind, id, params).await,
         }
     }
 
     pub async fn light_toggle(&self, kind: LightKind, id: u8) -> Result<SwitchResult> {
         match self {
-            Self::Gen1(_) => {
-                anyhow::bail!("light control for Gen1 devices is not yet implemented (planned)")
-            }
+            Self::Gen1(_) => Err(gen1_light_unsupported()),
             Self::Gen2(d) => d.light_toggle(kind, id).await,
         }
     }
 
     pub async fn light_status(&self, kind: LightKind, id: u8) -> Result<LightStatus> {
         match self {
-            Self::Gen1(_) => {
-                anyhow::bail!("light control for Gen1 devices is not yet implemented (planned)")
-            }
+            Self::Gen1(_) => Err(gen1_light_unsupported()),
             Self::Gen2(d) => d.light_status(kind, id).await,
         }
     }
@@ -182,29 +182,72 @@ pub fn create_device(
     client: reqwest::Client,
     password: Option<String>,
 ) -> ShellyDevice {
+    let base_host = info.ip.to_string();
+    create_device_with_host(info, base_host, client, password)
+}
+
+/// Build a `ShellyDevice` that addresses the device via an explicit
+/// `host[:port]` string rather than `info.ip`. `info` still carries the
+/// device identity (model, generation, mac, ...); `base_host` is only used
+/// to build the HTTP/RPC URLs, so it can carry a port that `info.ip` cannot.
+pub fn create_device_with_host(
+    info: DeviceInfo,
+    base_host: String,
+    client: reqwest::Client,
+    password: Option<String>,
+) -> ShellyDevice {
     match info.generation {
-        crate::model::DeviceGeneration::Gen1 => {
-            ShellyDevice::Gen1(gen1::Gen1Device::new(info, client, password))
-        }
+        crate::model::DeviceGeneration::Gen1 => ShellyDevice::Gen1(
+            gen1::Gen1Device::new_with_host(info, base_host, client, password),
+        ),
         crate::model::DeviceGeneration::Gen2 | crate::model::DeviceGeneration::Gen3 => {
-            ShellyDevice::Gen2(gen2::Gen2Device::new(info, client, password))
+            ShellyDevice::Gen2(gen2::Gen2Device::new_with_host(
+                info, base_host, client, password,
+            ))
         }
     }
 }
 
+/// Probe a device by IP address. Thin wrapper around `probe_target` that
+/// exists so existing callers (CLI subnet discovery) keep working unchanged.
 pub async fn probe_device(ip: IpAddr, client: &reqwest::Client) -> Result<DeviceInfo> {
-    let url = format!("http://{ip}/shelly");
+    probe_target(&ip.to_string(), client).await
+}
+
+/// Probe a device by `host[:port]` string, fetching `/shelly` and
+/// classifying the outcome uniformly with every other transport path:
+/// unreachable/non-success -> `Network` (or `Auth` for 401/403), a JSON body
+/// that fails to decode -> `Parse`, and a JSON body that decodes but does
+/// not describe a Shelly device -> `Parse` as well (reachable, answered,
+/// just not a Shelly). This is what lets a caller distinguish "nothing
+/// there" (`Network`/`Err`) from "something else is there" (`Parse`/`Err`
+/// still, but a different variant) from "a Shelly is there" (`Ok`).
+pub async fn probe_target(host: &str, client: &reqwest::Client) -> Result<DeviceInfo> {
+    let url = format!("http://{host}/shelly");
     let resp = client.get(&url).send().await?;
+
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Err(crate::error::status_error(status, &url, &body));
+    }
+
     let shelly: serde_json::Value = resp.json().await?;
-    let mut info = DeviceInfo::from_shelly_response(ip, &shelly)
-        .ok_or_else(|| anyhow::anyhow!("unrecognized Shelly response from {ip}"))?;
+
+    let ip = parse_host_ip(host).ok_or_else(|| Error::Parse {
+        message: format!("cannot determine an IP address for host '{host}'"),
+    })?;
+
+    let mut info = DeviceInfo::from_shelly_response(ip, &shelly).ok_or_else(|| Error::Parse {
+        message: format!("unrecognized Shelly response from {host}"),
+    })?;
 
     // Gen2/Gen3 devices don't report num_outputs in /shelly, so count switch
     // components from the full status response.
     if matches!(
         info.generation,
         crate::model::DeviceGeneration::Gen2 | crate::model::DeviceGeneration::Gen3
-    ) && let Ok((num_outputs, num_meters)) = count_gen2_outputs(ip, client).await
+    ) && let Ok((num_outputs, num_meters)) = count_gen2_outputs(host, client).await
     {
         info.num_outputs = num_outputs;
         info.num_meters = num_meters;
@@ -213,15 +256,42 @@ pub async fn probe_device(ip: IpAddr, client: &reqwest::Client) -> Result<Device
     Ok(info)
 }
 
+/// Resolve a `host` or `host:port` string down to the bare `IpAddr` used to
+/// populate `DeviceInfo.ip`. Handles bracketed IPv6 (`[::1]:8080`), bare
+/// IPv6 (`::1`), and IPv4 with or without a port.
+fn parse_host_ip(host: &str) -> Option<IpAddr> {
+    if let Ok(addr) = host.parse::<SocketAddr>() {
+        return Some(addr.ip());
+    }
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        return Some(ip);
+    }
+    // IPv4 host:port without brackets (SocketAddr parses this too, but be
+    // defensive in case of formats it rejects).
+    if let Some((host_part, _port)) = host.rsplit_once(':')
+        && let Ok(ip) = host_part.parse::<IpAddr>()
+    {
+        return Some(ip);
+    }
+    None
+}
+
 /// Count switch components from a Gen2/Gen3 `Shelly.GetStatus` response.
-async fn count_gen2_outputs(ip: IpAddr, client: &reqwest::Client) -> Result<(u8, u8)> {
-    let url = format!("http://{ip}/rpc/Shelly.GetStatus");
+async fn count_gen2_outputs(host: &str, client: &reqwest::Client) -> Result<(u8, u8)> {
+    let url = format!("http://{host}/rpc/Shelly.GetStatus");
     let resp = client.get(&url).send().await?;
+
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Err(crate::error::status_error(status, &url, &body));
+    }
+
     let status: serde_json::Value = resp.json().await?;
 
-    let obj = status
-        .as_object()
-        .ok_or_else(|| anyhow::anyhow!("expected JSON object"))?;
+    let obj = status.as_object().ok_or_else(|| Error::Parse {
+        message: format!("expected a JSON object from {url}"),
+    })?;
 
     let num_switches = obj.keys().filter(|k| k.starts_with("switch:")).count() as u8;
 

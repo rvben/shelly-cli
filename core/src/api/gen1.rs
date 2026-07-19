@@ -1,26 +1,42 @@
-use anyhow::{Context, Result};
-
+use crate::Result;
+use crate::error::{self, Error};
 use crate::model::{DeviceInfo, DeviceStatus, PowerReading, SwitchStatus};
 
 use super::{FirmwareInfo, SwitchResult};
 
 pub struct Gen1Device {
     info: DeviceInfo,
+    base_host: String,
     client: reqwest::Client,
     password: Option<String>,
 }
 
 impl Gen1Device {
     pub fn new(info: DeviceInfo, client: reqwest::Client, password: Option<String>) -> Self {
+        let base_host = info.ip.to_string();
+        Self::new_with_host(info, base_host, client, password)
+    }
+
+    /// Build a `Gen1Device` addressed by an explicit `host[:port]` string
+    /// rather than `info.ip`, so a device that isn't reachable on the
+    /// default port (or that must be reached by a test harness on an
+    /// ephemeral loopback port) can still be targeted.
+    pub fn new_with_host(
+        info: DeviceInfo,
+        base_host: String,
+        client: reqwest::Client,
+        password: Option<String>,
+    ) -> Self {
         Self {
             info,
+            base_host,
             client,
             password,
         }
     }
 
     fn url(&self, path: &str) -> String {
-        format!("http://{}{path}", self.info.ip)
+        format!("http://{}{path}", self.base_host)
     }
 
     async fn get_json(&self, path: &str) -> Result<serde_json::Value> {
@@ -29,18 +45,15 @@ impl Gen1Device {
         if let Some(ref password) = self.password {
             req = req.basic_auth("admin", Some(password));
         }
-        let resp = req
-            .send()
-            .await
-            .with_context(|| format!("failed to reach {url}"))?;
+        let resp = req.send().await?;
 
-        if !resp.status().is_success() {
-            anyhow::bail!("HTTP {} from {url}", resp.status());
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(error::status_error(status, &url, &body));
         }
 
-        resp.json()
-            .await
-            .with_context(|| format!("invalid JSON from {url}"))
+        Ok(resp.json().await?)
     }
 
     pub fn info(&self) -> &DeviceInfo {
@@ -58,11 +71,13 @@ impl Gen1Device {
         let relays = status
             .get("relays")
             .and_then(|v| v.as_array())
-            .ok_or_else(|| anyhow::anyhow!("no relays in status"))?;
+            .ok_or_else(|| Error::Parse {
+                message: "no relays in status".to_string(),
+            })?;
 
-        let relay = relays
-            .get(id as usize)
-            .ok_or_else(|| anyhow::anyhow!("relay {id} not found"))?;
+        let relay = relays.get(id as usize).ok_or_else(|| Error::Parse {
+            message: format!("relay {id} not found"),
+        })?;
 
         let meter = status
             .get("meters")
@@ -96,7 +111,9 @@ impl Gen1Device {
             .get("meters")
             .and_then(|v| v.as_array())
             .and_then(|m| m.get(id as usize))
-            .ok_or_else(|| anyhow::anyhow!("meter {id} not found"))?;
+            .ok_or_else(|| Error::Parse {
+                message: format!("meter {id} not found"),
+            })?;
 
         let power = meter.get("power").and_then(|v| v.as_f64()).unwrap_or(0.0);
         let total = meter.get("total").and_then(|v| v.as_f64()).unwrap_or(0.0);
@@ -115,9 +132,9 @@ impl Gen1Device {
     pub async fn firmware_check(&self) -> Result<FirmwareInfo> {
         let status = self.get_json("/status").await?;
 
-        let update = status
-            .get("update")
-            .ok_or_else(|| anyhow::anyhow!("no update info in status"))?;
+        let update = status.get("update").ok_or_else(|| Error::Parse {
+            message: "no update info in status".to_string(),
+        })?;
 
         let has_update = update
             .get("has_update")
@@ -168,9 +185,11 @@ impl Gen1Device {
             "eco_mode" => ("eco_mode_enabled", value.to_string()),
             "led_status_disable" => ("led_status_disable", value.to_string()),
             _ => {
-                anyhow::bail!(
-                    "unknown config key '{key}'. Supported keys: name, eco_mode, led_status_disable"
-                );
+                return Err(Error::Unsupported {
+                    message: format!(
+                        "unknown config key '{key}'. Supported keys: name, eco_mode, led_status_disable"
+                    ),
+                });
             }
         };
         self.get_json(&format!("/settings?{}={}", param.0, param.1))
@@ -179,7 +198,9 @@ impl Gen1Device {
     }
 
     pub async fn schedule_list(&self) -> Result<serde_json::Value> {
-        anyhow::bail!("schedules are not supported on Gen1 devices")
+        Err(Error::Unsupported {
+            message: "schedules are not supported on Gen1 devices".to_string(),
+        })
     }
 
     pub async fn webhook_list(&self) -> Result<serde_json::Value> {
@@ -204,9 +225,9 @@ impl Gen1Device {
             "ap_roaming",
         ];
 
-        let obj = config
-            .as_object()
-            .ok_or_else(|| anyhow::anyhow!("config must be a JSON object"))?;
+        let obj = config.as_object().ok_or_else(|| Error::Parse {
+            message: "config must be a JSON object".to_string(),
+        })?;
 
         let mut params = Vec::new();
         for (key, value) in obj {
@@ -237,13 +258,12 @@ impl Gen1Device {
         if let Some(ref password) = self.password {
             req = req.basic_auth("admin", Some(password));
         }
-        let resp = req
-            .send()
-            .await
-            .with_context(|| format!("failed to reach {url}"))?;
+        let resp = req.send().await?;
 
-        if !resp.status().is_success() {
-            anyhow::bail!("HTTP {} from {url}", resp.status());
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(error::status_error(status, &url, &body));
         }
         Ok(())
     }

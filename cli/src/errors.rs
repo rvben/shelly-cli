@@ -46,10 +46,54 @@ pub struct CliError {
     pub exit_code: i32,
 }
 
+/// Classify a typed `shelly_core::Error` into a structured `CliError`.
+///
+/// `shelly-core` transport paths already distinguish network failures from
+/// authentication failures, device-side rejections, unparseable responses,
+/// and unsupported operations, so this maps each variant directly onto the
+/// closest existing schema `kind` instead of re-deriving it from message
+/// text.
+fn classify_core_error(err: &shelly_core::Error) -> CliError {
+    let message = err.to_string();
+    match err {
+        shelly_core::Error::Network { .. } => CliError {
+            kind: "network_error",
+            message,
+            hint: None,
+            exit_code: 2,
+        },
+        shelly_core::Error::Auth { .. } => CliError {
+            kind: "auth_required",
+            message,
+            hint: Some("Use --password or set [auth] password in config.toml.".to_string()),
+            exit_code: 3,
+        },
+        shelly_core::Error::Rejected { .. } => CliError {
+            kind: "invalid_input",
+            message,
+            hint: None,
+            exit_code: 1,
+        },
+        shelly_core::Error::Parse { .. } => CliError {
+            kind: "invalid_input",
+            message,
+            hint: None,
+            exit_code: 1,
+        },
+        shelly_core::Error::Unsupported { .. } => CliError {
+            kind: "invalid_input",
+            message,
+            hint: None,
+            exit_code: 1,
+        },
+    }
+}
+
 /// Classify an anyhow error into a structured `CliError`.
 ///
-/// Checks for sentinel types first (via downcasting), then falls back to
-/// string-matching on the error message.
+/// Checks for sentinel types first (via downcasting), then for a typed
+/// `shelly_core::Error`, then falls back to string-matching on the error
+/// message.
 pub fn classify_error(err: &anyhow::Error) -> CliError {
     // Sentinel: confirmation_required (exit 2)
     if let Some(cr) = err.downcast_ref::<ConfirmationRequired>() {
@@ -59,6 +103,12 @@ pub fn classify_error(err: &anyhow::Error) -> CliError {
             hint: Some("Re-run with --yes to confirm.".to_string()),
             exit_code: 2,
         };
+    }
+
+    // Typed shelly-core transport/protocol errors take priority over string
+    // matching: they already carry the right classification.
+    if let Some(core_err) = err.downcast_ref::<shelly_core::Error>() {
+        return classify_core_error(core_err);
     }
 
     let message = format!("{err:#}");
@@ -106,5 +156,77 @@ pub fn classify_error(err: &anyhow::Error) -> CliError {
         message,
         hint,
         exit_code,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn core_network_error_maps_to_network_error_exit_2() {
+        let core_err = shelly_core::Error::Network {
+            message: "connection refused".to_string(),
+        };
+        let err: anyhow::Error = core_err.into();
+        let classified = classify_error(&err);
+        assert_eq!(classified.kind, "network_error");
+        assert_eq!(classified.exit_code, 2);
+    }
+
+    #[test]
+    fn core_auth_error_maps_to_auth_required_exit_3() {
+        let core_err = shelly_core::Error::Auth {
+            message: "HTTP 401".to_string(),
+        };
+        let err: anyhow::Error = core_err.into();
+        let classified = classify_error(&err);
+        assert_eq!(classified.kind, "auth_required");
+        assert_eq!(classified.exit_code, 3);
+        assert!(classified.hint.is_some());
+    }
+
+    #[test]
+    fn core_rejected_error_maps_to_invalid_input_exit_1() {
+        let core_err = shelly_core::Error::Rejected {
+            message: "code -32000: bad params".to_string(),
+        };
+        let err: anyhow::Error = core_err.into();
+        let classified = classify_error(&err);
+        assert_eq!(classified.kind, "invalid_input");
+        assert_eq!(classified.exit_code, 1);
+    }
+
+    #[test]
+    fn core_parse_error_maps_to_invalid_input_exit_1() {
+        let core_err = shelly_core::Error::Parse {
+            message: "not a shelly device".to_string(),
+        };
+        let err: anyhow::Error = core_err.into();
+        let classified = classify_error(&err);
+        assert_eq!(classified.kind, "invalid_input");
+        assert_eq!(classified.exit_code, 1);
+    }
+
+    #[test]
+    fn core_unsupported_error_maps_to_invalid_input_exit_1() {
+        let core_err = shelly_core::Error::Unsupported {
+            message: "schedules are not supported on Gen1 devices".to_string(),
+        };
+        let err: anyhow::Error = core_err.into();
+        let classified = classify_error(&err);
+        assert_eq!(classified.kind, "invalid_input");
+        assert_eq!(classified.exit_code, 1);
+    }
+
+    #[test]
+    fn core_error_message_includes_display_prefix() {
+        let core_err = shelly_core::Error::Network {
+            message: "connection refused".to_string(),
+        };
+        let err: anyhow::Error = core_err.into();
+        let classified = classify_error(&err);
+        assert!(classified.message.contains("network error:"));
+        assert!(classified.message.contains("connection refused"));
     }
 }

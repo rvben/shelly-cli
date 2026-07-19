@@ -3,11 +3,11 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
-use anyhow::Result;
 use ipnet::Ipv4Net;
 use tokio::sync::mpsc;
 use tokio::time::timeout;
 
+use crate::Result;
 use crate::model::DeviceInfo;
 
 use super::probe_device;
@@ -76,6 +76,13 @@ pub async fn enrich_gen1_name(info: &mut DeviceInfo, client: &reqwest::Client) -
 
     let url = format!("http://{}/settings", info.ip);
     let resp = client.get(&url).send().await?;
+
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Err(crate::error::status_error(status, &url, &body));
+    }
+
     let settings: serde_json::Value = resp.json().await?;
 
     if let Some(name) = settings.get("name").and_then(|v| v.as_str())
