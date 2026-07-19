@@ -301,7 +301,7 @@ impl SmartDevice for ShellyClient {
 
     async fn firmware_version(&self, target: &DeviceTarget) -> switchkit::Result<Option<String>> {
         let dev = self.open(target).await?;
-        Ok(Some(dev.info().firmware_version.clone()))
+        Ok(non_sentinel(&dev.info().firmware_version))
     }
 
     /// Shelly's stable-channel OTA update takes no URL parameter; `ota_url`
@@ -475,5 +475,63 @@ mod tests {
             snapshot.firmware.and_then(|f| f.version).as_deref(),
             Some("1.2.3")
         );
+    }
+
+    /// `firmware_version` must agree with `snapshot_from`: a device whose
+    /// `/shelly` response omits firmware falls back to the sentinel
+    /// `"unknown"` in `DeviceInfo.firmware_version`, and that sentinel must
+    /// never be reported as a real value.
+    #[tokio::test]
+    async fn firmware_version_omits_sentinel() {
+        let server = MockServer::start_async().await;
+        server
+            .mock_async(|when, then| {
+                when.method(GET).path("/shelly");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "shellyplus1-abc",
+                    "mac": "AABBCCDDEEFF",
+                    "gen": 2
+                }));
+            })
+            .await;
+
+        let client = ShellyClient::default();
+        let target = DeviceTarget::new(server.address().to_string());
+        let firmware = client
+            .firmware_version(&target)
+            .await
+            .expect("firmware_version should succeed against the mock");
+
+        assert_eq!(
+            firmware, None,
+            "the 'unknown' sentinel must not be exposed as a real firmware version"
+        );
+    }
+
+    #[tokio::test]
+    async fn firmware_version_reports_real_value() {
+        let server = MockServer::start_async().await;
+        server
+            .mock_async(|when, then| {
+                when.method(GET).path("/shelly");
+                then.status(200).json_body(serde_json::json!({
+                    "id": "shellyplus1pm-aabbccddeeff",
+                    "mac": "AABBCCDDEEFF",
+                    "model": "SNSW-001P16EU",
+                    "gen": 2,
+                    "ver": "1.2.3",
+                    "app": "Plus1PM"
+                }));
+            })
+            .await;
+
+        let client = ShellyClient::default();
+        let target = DeviceTarget::new(server.address().to_string());
+        let firmware = client
+            .firmware_version(&target)
+            .await
+            .expect("firmware_version should succeed against the mock");
+
+        assert_eq!(firmware.as_deref(), Some("1.2.3"));
     }
 }

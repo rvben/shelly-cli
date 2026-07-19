@@ -4,7 +4,12 @@ use thiserror::Error as ThisError;
 ///
 /// The five variants map 1:1 onto `switchkit::Error`: a caller that already
 /// speaks that vocabulary can translate this enum without guesswork.
+///
+/// `#[non_exhaustive]` because the error taxonomy is expected to grow; this
+/// is free to add now and a breaking change to add later, for a crate about
+/// to publish its first crates.io release.
 #[derive(Debug, ThisError)]
+#[non_exhaustive]
 pub enum Error {
     /// The device could not be reached at all (connect/timeout/read failure),
     /// or it responded with a non-success HTTP status that is not an auth

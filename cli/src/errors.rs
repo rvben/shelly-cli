@@ -86,6 +86,16 @@ fn classify_core_error(err: &shelly_core::Error) -> CliError {
             hint: None,
             exit_code: 1,
         },
+        // `shelly_core::Error` is `#[non_exhaustive]`: any variant added
+        // later that isn't explicitly classified above falls back to the
+        // same treatment as `Rejected`/`Parse`/`Unsupported` rather than
+        // failing to compile.
+        _ => CliError {
+            kind: "invalid_input",
+            message,
+            hint: None,
+            exit_code: 1,
+        },
     }
 }
 
