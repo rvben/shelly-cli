@@ -223,6 +223,21 @@ async fn run() -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&schema)?);
             Ok(())
         }
+        Command::Capabilities => {
+            let value = serde_json::json!({
+                "generations": [1, 2, 3],
+                "features": ["switches", "lights", "power", "energy", "firmware", "schedules", "webhooks"],
+                "structured_output": true
+            });
+            if json_output {
+                println!("{}", serde_json::to_string_pretty(&value)?);
+            } else {
+                println!(
+                    "Generations: 1, 2, 3\nFeatures: switches, lights, power, energy, firmware, schedules, webhooks"
+                );
+            }
+            Ok(())
+        }
         Command::Completions { shell } => {
             generate_completions(shell);
             Ok(())

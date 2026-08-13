@@ -233,6 +233,9 @@ pub enum Command {
     /// Output a machine-readable JSON description of all commands, arguments, and error kinds
     Schema,
 
+    /// Describe supported device generations without network access
+    Capabilities,
+
     /// Generate shell completions (with dynamic device name completion)
     Completions {
         /// Shell to generate completions for

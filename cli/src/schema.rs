@@ -135,6 +135,9 @@ fn build_metadata() -> HashMap<&'static str, CommandMeta> {
             "generation" => "string",
         ]),
         meta!("schema", mutating: false, fields: []),
+        meta!("capabilities", mutating: false, fields: [
+            "generations" => "array", "features" => "array", "structured_output" => "boolean",
+        ]),
         meta!("completions", mutating: false, fields: []),
     ])
 }
@@ -320,7 +323,7 @@ fn errors_schema() -> Value {
     ])
 }
 
-/// Generate a clispec v0.2-compliant machine-readable schema.
+/// Generate a clispec v0.3-compliant machine-readable schema.
 pub fn generate_schema() -> Value {
     let cmd = Cli::command();
     let version = cmd.get_version().unwrap_or("unknown");
@@ -338,15 +341,108 @@ pub fn generate_schema() -> Value {
     let mut commands: Vec<Value> = Vec::new();
     walk_commands(&cmd, "", &metadata, &mut commands);
 
-    json!({
-        "clispec": "0.2",
+    let mut schema = json!({
+        "clispec": "0.3",
         "name": "shelly",
         "version": version,
         "description": "CLI for managing and controlling Shelly smart home devices over the LAN",
         "global_args": global_args,
         "commands": commands,
         "errors": errors_schema(),
-    })
+    });
+    enrich_v0_3(&mut schema);
+    schema
+}
+
+fn enrich_v0_3(schema: &mut Value) {
+    schema["output"] = json!({"tty":"text","piped":"json"});
+    let Some(commands) = schema["commands"].as_array_mut() else {
+        return;
+    };
+    for command in commands {
+        let Some(object) = command.as_object_mut() else {
+            continue;
+        };
+        let name = object["name"].as_str().unwrap_or_default().to_string();
+        if name == "backup" {
+            object.insert("mutating".into(), json!(true));
+        }
+        let mutating = object["mutating"].as_bool().unwrap_or(false);
+        object.insert(
+            "effects".into(),
+            json!(if !mutating {
+                "read_only"
+            } else if name.contains("toggle") {
+                "non_idempotent"
+            } else {
+                "idempotent"
+            }),
+        );
+        if name == "completions" {
+            object.remove("output_fields");
+            object.insert("output_kind".into(), json!("opaque"));
+            object.insert("media_type".into(), json!("text/plain"));
+            continue;
+        }
+        if name == "watch" {
+            object.insert("output_kind".into(), json!("stream"));
+            object.insert("stream_format".into(), json!("terminal"));
+            continue;
+        }
+        let unbounded = matches!(name.as_str(), "devices" | "schedule list" | "webhook list");
+        object.insert(
+            "cardinality".into(),
+            json!(if unbounded { "unbounded" } else { "bounded" }),
+        );
+        if unbounded {
+            object.insert(
+                "pagination".into(),
+                json!({"style":"offset","limit_arg":"--limit","offset_arg":"--offset"}),
+            );
+            object.insert("fields_arg".into(), json!("--fields"));
+        }
+        if name == "capabilities" {
+            object.insert("example".into(), json!({"args":["capabilities"]}));
+        }
+        if name == "schema" {
+            object.remove("output_fields");
+            object.insert("cardinality".into(), json!("single"));
+            object.insert(
+                "stdout_schema".into(),
+                json!({"$ref":"https://clispec.dev/schema/v0.3.json"}),
+            );
+        }
+        if matches!(name.as_str(), "restore" | "rename" | "reboot") {
+            object.insert("confirmation_bypass_arg".into(), json!("--yes"));
+        }
+        if let Some(fields) = object
+            .get_mut("output_fields")
+            .and_then(Value::as_array_mut)
+        {
+            for field in fields {
+                let Some(field) = field.as_object_mut() else {
+                    continue;
+                };
+                let kind = field
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .unwrap_or("string")
+                    .to_string();
+                if let Some(base) = kind.strip_suffix(" | null") {
+                    field.insert("type".into(), json!(base));
+                    field.insert("nullable".into(), json!(true));
+                }
+                if field.get("type").and_then(Value::as_str) == Some("array")
+                    && !field.contains_key("items")
+                {
+                    field.insert("items".into(), json!({"type":"object"}));
+                }
+            }
+        }
+        if !object.contains_key("output_fields") && !object.contains_key("stdout_schema") {
+            object.insert("stdout_schema".into(), json!({}));
+        }
+    }
 }
 
 #[cfg(test)]
@@ -375,8 +471,8 @@ mod tests {
         assert!(schema["errors"].is_array(), "errors must be an array");
         assert_eq!(
             schema["clispec"],
-            serde_json::json!("0.2"),
-            "clispec version must be 0.2"
+            serde_json::json!("0.3"),
+            "clispec version must be 0.3"
         );
     }
 
