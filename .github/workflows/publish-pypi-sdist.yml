@@ -1,0 +1,30 @@
+name: Publish PyPI source distribution
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git tag whose source distribution should be published
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: astral-sh/setup-uv@v6
+      - name: Build source distribution
+        run: uvx maturin sdist
+      - name: Validate source distribution
+        run: uvx --from twine twine check target/wheels/*.tar.gz
+      - name: Publish source distribution
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: uvx --from twine twine upload --skip-existing --verbose target/wheels/*.tar.gz

@@ -159,7 +159,7 @@ jobs:
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
-        run: uv tool run twine upload artifacts/wheels/**/*.whl artifacts/sdist/*.tar.gz
+        run: uv tool run twine upload --skip-existing --verbose artifacts/wheels/**/*.whl artifacts/sdist/*.tar.gz
 
   update-homebrew:
     needs: release
@@ -185,10 +185,12 @@ jobs:
           for target in aarch64-apple-darwin x86_64-apple-darwin aarch64-unknown-linux-gnu x86_64-unknown-linux-gnu; do
             curl -fsSL -o "shelly-${TAG}-${target}.tar.gz" "${BASE_URL}/shelly-${TAG}-${target}.tar.gz"
           done
-          echo "SHA_MACOS_ARM64=$(sha256sum shelly-${TAG}-aarch64-apple-darwin.tar.gz | cut -d' ' -f1)" >> "$GITHUB_ENV"
-          echo "SHA_MACOS_X86=$(sha256sum shelly-${TAG}-x86_64-apple-darwin.tar.gz | cut -d' ' -f1)" >> "$GITHUB_ENV"
-          echo "SHA_LINUX_ARM64=$(sha256sum shelly-${TAG}-aarch64-unknown-linux-gnu.tar.gz | cut -d' ' -f1)" >> "$GITHUB_ENV"
-          echo "SHA_LINUX_X86=$(sha256sum shelly-${TAG}-x86_64-unknown-linux-gnu.tar.gz | cut -d' ' -f1)" >> "$GITHUB_ENV"
+          {
+            echo "SHA_MACOS_ARM64=$(sha256sum shelly-${TAG}-aarch64-apple-darwin.tar.gz | cut -d' ' -f1)"
+            echo "SHA_MACOS_X86=$(sha256sum shelly-${TAG}-x86_64-apple-darwin.tar.gz | cut -d' ' -f1)"
+            echo "SHA_LINUX_ARM64=$(sha256sum shelly-${TAG}-aarch64-unknown-linux-gnu.tar.gz | cut -d' ' -f1)"
+            echo "SHA_LINUX_X86=$(sha256sum shelly-${TAG}-x86_64-unknown-linux-gnu.tar.gz | cut -d' ' -f1)"
+          } >> "$GITHUB_ENV"
 
       - name: Update Homebrew formula
         if: steps.check-token.outputs.skip == 'false'
