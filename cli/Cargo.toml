@@ -19,7 +19,7 @@ path = "src/main.rs"
 
 [[bin]]
 name = "shelly-cli"
-path = "src/main.rs"
+path = "src/shelly_cli_alias.rs"
 
 [dependencies]
 shelly-core = { path = "../core", version = "0.2.0" }

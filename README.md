@@ -31,6 +31,9 @@ A fast CLI for discovering, monitoring, and controlling Shelly smart home device
 
 ```bash
 uv tool install shelly-cli
+
+# Or run without installing
+uvx shelly-cli --help
 ```
 
 ### Homebrew (macOS/Linux)
