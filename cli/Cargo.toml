@@ -22,7 +22,7 @@ name = "shelly-cli"
 path = "src/shelly_cli_alias.rs"
 
 [dependencies]
-shelly-core = { path = "../core", version = "0.2.3" }
+shelly-core = { path = "../core", version = "0.2.4" }
 clap = { version = "4", features = ["derive"] }
 clap_complete = "4"
 tokio = { workspace = true }

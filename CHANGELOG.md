@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.2.4](https://github.com/rvben/shelly-cli/compare/v0.2.3...v0.2.4) - 2026-08-26
+
+### Added
+
+- **watch**: recover device authentication in place ([1398696](https://github.com/rvben/shelly-cli/commit/13986966cb3395d417caaa2bb9e3103b77c28f6b))
+
 ## [0.2.3](https://github.com/rvben/shelly-cli/compare/v0.2.2...v0.2.3) - 2026-08-26
 
 ### Fixed

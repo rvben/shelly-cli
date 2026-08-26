@@ -1710,7 +1710,7 @@ dependencies = [
 
 [[package]]
 name = "shelly-cli"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1735,7 +1735,7 @@ dependencies = [
 
 [[package]]
 name = "shelly-core"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "async-trait",
  "httpmock",
