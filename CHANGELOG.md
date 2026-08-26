@@ -4,7 +4,15 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.2.3](https://github.com/rvben/shelly-cli/compare/v0.2.2...v0.2.3) - 2026-08-26
 
+### Fixed
+
+- **ci**: install pinned Rust components ([fa271a5](https://github.com/rvben/shelly-cli/commit/fa271a5f57a16bd604f9ad431f8fe144604cb03c))
+
+### Performance
+
+- **packaging**: make package launcher lightweight ([b67f67c](https://github.com/rvben/shelly-cli/commit/b67f67c4ca3a965589f6b8610ab806798d0f0bf6))
 
 ## [0.2.0](https://github.com/rvben/shelly-cli/compare/v0.1.12...v0.2.0) - 2026-07-20
 
