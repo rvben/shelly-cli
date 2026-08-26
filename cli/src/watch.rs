@@ -27,6 +27,8 @@ impl Drop for TerminalGuard {
 struct DeviceSnapshot {
     name: String,
     online: bool,
+    auth_failed: bool,
+    error: Option<String>,
     switches: Vec<SwitchSnapshot>,
     temperature_c: Option<f64>,
     rssi: Option<i32>,
@@ -46,7 +48,14 @@ struct SelectableRow {
     device_index: usize,
     switch_id: u8,
     is_online: bool,
+    auth_failed: bool,
     has_switch: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WatchExit {
+    Quit,
+    UpdatePassword,
 }
 
 pub async fn run(
@@ -54,7 +63,7 @@ pub async fn run(
     client: &reqwest::Client,
     password: Option<String>,
     interval: Duration,
-) -> Result<()> {
+) -> Result<WatchExit> {
     terminal::enable_raw_mode()?;
     let _guard = TerminalGuard;
     let mut stdout = io::stdout();
@@ -69,7 +78,7 @@ async fn watch_loop(
     password: &Option<String>,
     interval: Duration,
     stdout: &mut io::Stdout,
-) -> Result<()> {
+) -> Result<WatchExit> {
     let mut selected: usize = 0;
     let mut status_msg: Option<(String, tokio::time::Instant)> = None;
 
@@ -105,10 +114,11 @@ async fn watch_loop(
                 && let Event::Key(key) = event::read()?
             {
                 match key.code {
-                    KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
+                    KeyCode::Char('q') | KeyCode::Esc => return Ok(WatchExit::Quit),
                     KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        return Ok(());
+                        return Ok(WatchExit::Quit);
                     }
+                    KeyCode::Char('p') => return Ok(WatchExit::UpdatePassword),
                     KeyCode::Up | KeyCode::Char('k') if selected > 0 => {
                         selected -= 1;
                         render(stdout, &snapshots, selected, &status_msg)?;
@@ -131,7 +141,13 @@ async fn watch_loop(
                     }
                     KeyCode::Enter | KeyCode::Char(' ') => {
                         if let Some(row) = rows.get(selected) {
-                            if !row.is_online {
+                            if row.auth_failed {
+                                status_msg = Some((
+                                    "authentication required — press p to update the password"
+                                        .to_string(),
+                                    tokio::time::Instant::now() + Duration::from_secs(5),
+                                ));
+                            } else if !row.is_online {
                                 status_msg = Some((
                                     "device is offline".to_string(),
                                     tokio::time::Instant::now() + Duration::from_secs(3),
@@ -196,6 +212,7 @@ fn build_selectable_rows(snapshots: &[DeviceSnapshot]) -> Vec<SelectableRow> {
                 device_index,
                 switch_id: 0,
                 is_online: false,
+                auth_failed: snap.auth_failed,
                 has_switch: false,
             });
         } else if snap.switches.is_empty() {
@@ -203,6 +220,7 @@ fn build_selectable_rows(snapshots: &[DeviceSnapshot]) -> Vec<SelectableRow> {
                 device_index,
                 switch_id: 0,
                 is_online: true,
+                auth_failed: false,
                 has_switch: false,
             });
         } else {
@@ -211,6 +229,7 @@ fn build_selectable_rows(snapshots: &[DeviceSnapshot]) -> Vec<SelectableRow> {
                     device_index,
                     switch_id: sw.id,
                     is_online: true,
+                    auth_failed: false,
                     has_switch: true,
                 });
             }
@@ -237,6 +256,8 @@ async fn poll_all(
                     Ok(status) => DeviceSnapshot {
                         name,
                         online: true,
+                        auth_failed: false,
+                        error: None,
                         switches: status
                             .switches
                             .iter()
@@ -252,14 +273,7 @@ async fn poll_all(
                         rssi: status.wifi.as_ref().and_then(|w| w.rssi),
                         uptime: status.uptime,
                     },
-                    Err(_) => DeviceSnapshot {
-                        name,
-                        online: false,
-                        switches: Vec::new(),
-                        temperature_c: None,
-                        rssi: None,
-                        uptime: None,
-                    },
+                    Err(error) => failed_snapshot(name, error),
                 }
             })
         })
@@ -272,6 +286,24 @@ async fn poll_all(
     }
 
     snapshots
+}
+
+fn failed_snapshot(name: String, error: shelly_core::Error) -> DeviceSnapshot {
+    let auth_failed = matches!(&error, shelly_core::Error::Auth { .. });
+    DeviceSnapshot {
+        name,
+        online: false,
+        auth_failed,
+        error: Some(if auth_failed {
+            "device rejected the saved password".into()
+        } else {
+            error.to_string()
+        }),
+        switches: Vec::new(),
+        temperature_c: None,
+        rssi: None,
+        uptime: None,
+    }
 }
 
 fn render(
@@ -289,16 +321,35 @@ fn render(
     let now = chrono::Local::now().format("%H:%M:%S");
     writeln!(
         stdout,
-        " {}  |  {now}  |  {} select  {} toggle  {} quit\r",
+        " {}  |  {now}  |  {} select  {} toggle  {} password  {} quit\r",
         "shelly watch".bold(),
         "↑↓".bold(),
         "⏎".bold(),
+        "p".bold(),
         "q".bold(),
     )?;
 
     // Show status message if active
+    let selected_snapshot = build_selectable_rows(snapshots)
+        .get(selected)
+        .and_then(|row| snapshots.get(row.device_index))
+        .filter(|snapshot| !snapshot.online);
     if let Some((msg, _)) = status_msg {
         writeln!(stdout, " {}\r", msg.yellow())?;
+    } else if let Some(snapshot) = selected_snapshot.filter(|snapshot| snapshot.auth_failed) {
+        writeln!(
+            stdout,
+            " {}\r",
+            format!(
+                "{} needs authentication — press p to update the saved password",
+                snapshot.name
+            )
+            .yellow()
+        )?;
+    } else if let Some(snapshot) = selected_snapshot
+        && let Some(error) = &snapshot.error
+    {
+        writeln!(stdout, " {}\r", error.dimmed())?;
     } else {
         writeln!(stdout, "\r")?;
     }
@@ -324,11 +375,20 @@ fn render(
             } else {
                 " ".to_string()
             };
+            let state = if snap.auth_failed { "AUTH" } else { "OFFLINE" };
             let line = format!(
                 " {} {:<30} {:<5} {:>8} {:>8} {:>7} {:>10} {:>6} -",
                 indicator,
-                snap.name.red(),
-                "OFFLINE".red().bold(),
+                if snap.auth_failed {
+                    snap.name.yellow().to_string()
+                } else {
+                    snap.name.red().to_string()
+                },
+                if snap.auth_failed {
+                    state.yellow().bold().to_string()
+                } else {
+                    state.red().bold().to_string()
+                },
                 "-".dimmed(),
                 "-".dimmed(),
                 "-".dimmed(),
@@ -468,4 +528,45 @@ fn render(
 
     stdout.flush()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn auth_errors_are_not_reported_as_offline() {
+        let snapshot = failed_snapshot(
+            "Kitchen".into(),
+            shelly_core::Error::Auth {
+                message: "HTTP 401".into(),
+            },
+        );
+        assert!(!snapshot.online);
+        assert!(snapshot.auth_failed);
+        assert_eq!(
+            snapshot.error.as_deref(),
+            Some("device rejected the saved password")
+        );
+        let rows = build_selectable_rows(&[snapshot]);
+        assert!(rows[0].auth_failed);
+    }
+
+    #[test]
+    fn network_errors_remain_offline_without_requesting_a_password() {
+        let snapshot = failed_snapshot(
+            "Garage".into(),
+            shelly_core::Error::Network {
+                message: "connection timed out".into(),
+            },
+        );
+        assert!(!snapshot.online);
+        assert!(!snapshot.auth_failed);
+        assert!(
+            snapshot
+                .error
+                .as_deref()
+                .is_some_and(|message| message.contains("timed out"))
+        );
+    }
 }

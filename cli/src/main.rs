@@ -214,7 +214,9 @@ async fn run() -> Result<()> {
         Command::Reboot { yes } => {
             cmd_reboot(&cli, &http_client, &password, yes, json_output).await
         }
-        Command::Watch { interval } => cmd_watch(&cli, &http_client, &password, interval).await,
+        Command::Watch { interval } => {
+            cmd_watch(&cli, &http_client, cli.password.clone(), interval).await
+        }
         Command::Info => cmd_info(&cli, &http_client, &password, json_output).await,
         Command::Health => cmd_health(&cli, &http_client, &password, json_output).await,
         Command::Group { ref action } => cmd_group(action.clone(), json_output),
@@ -2020,12 +2022,24 @@ async fn cmd_rename(
 async fn cmd_watch(
     cli: &Cli,
     http_client: &reqwest::Client,
-    password: &Option<String>,
+    mut password_arg: Option<String>,
     interval_secs: u64,
 ) -> Result<()> {
     let devices = resolve_all_or_group(cli)?;
     let interval = Duration::from_secs(interval_secs);
-    watch::run(&devices, http_client, password.clone(), interval).await
+    loop {
+        let saved_password = config::load_config()?.auth.password;
+        let password = password_arg.clone().or(saved_password);
+        match watch::run(&devices, http_client, password, interval).await? {
+            watch::WatchExit::Quit => return Ok(()),
+            watch::WatchExit::UpdatePassword => {
+                config::prompt_and_save_password()?;
+                // Choosing password recovery explicitly makes the freshly
+                // saved credential replace any stale --password override.
+                password_arg = None;
+            }
+        }
+    }
 }
 
 async fn cmd_info(

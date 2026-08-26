@@ -183,6 +183,11 @@ shelly --password "secret" status -a
 # password = "secret"
 ```
 
+`shelly watch` distinguishes rejected credentials from devices that are truly
+offline. When a device shows `AUTH`, press `p` to enter a replacement password
+with hidden input. The dashboard restores the normal terminal for the prompt,
+saves the credential in an owner-only config file, and resumes automatically.
+
 ### Shell completions
 
 ```bash
