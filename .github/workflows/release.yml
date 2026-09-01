@@ -184,19 +184,40 @@ jobs:
   publish-crates:
     needs: [metadata, release]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
         with:
           toolchain: 1.96.0
           components: rustfmt, clippy
-      - if: ${{ inputs.dry_run != true }}
-        run: cargo publish --locked
+      - name: Authenticate to crates.io via Trusted Publishing
+        id: crates_io_auth
+        if: ${{ inputs.dry_run != true }}
+        # v1.0.5
+        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18
+
+      - name: Publish to crates.io
+        if: ${{ inputs.dry_run != true }}
         env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates_io_auth.outputs.token }}
+        run: |
+          cargo publish -p shelly-core --locked
+          # Wait for the index to catch up before publishing the dependent CLI.
+          for i in $(seq 1 30); do
+            if cargo publish -p shelly-cli --locked; then
+              exit 0
+            fi
+            echo "shelly-core not yet available; retrying in 20s ($i/30)"
+            sleep 20
+          done
+          exit 1
       - name: Validate crates.io package
         if: ${{ inputs.dry_run == true }}
-        run: cargo publish --locked --dry-run
+        run: cargo publish -p shelly-core --locked --dry-run
 
   publish-pypi:
     needs: [metadata, release, build, sdist]
