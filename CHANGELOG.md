@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.2.5](https://github.com/rvben/shelly-cli/compare/v0.2.4...v0.2.5) - 2026-09-27
+
+### Fixed
+
+- **deps**: update rustls to 0.23.45 for RUSTSEC-2026-0285 ([ff465f6](https://github.com/rvben/shelly-cli/commit/ff465f66b09088e4fefd0d8ca6232369a2c31980))
+
 ## [0.2.4](https://github.com/rvben/shelly-cli/compare/v0.2.3...v0.2.4) - 2026-08-26
 
 ### Added
