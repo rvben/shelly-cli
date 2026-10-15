@@ -14,7 +14,7 @@ keywords = ["shelly", "home-automation", "iot", "smart-home", "cli"]
 categories = ["command-line-utilities", "network-programming"]
 
 [workspace.dependencies]
-anyhow = "1.0.103"
+anyhow = "1.0.104"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
